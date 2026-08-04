@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      :root {
+        --primary-red: #b81d18;
+        --primary-dark-red: #941310;
+        --bg-light-blue: #d4efff;
+        --border-blue: #a3daf8;
+        --bg-pink: #ffd2d6;
+        --border-pink: #fca8b0;
+        --text-color: #222;
+      }
+
+      body {
+        width: 396px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #ffffff;
+        color: var(--text-color);
+      }
+
+      .header {
+        background: linear-gradient(
+          180deg,
+          var(--primary-red) 0%,
+          var(--primary-dark-red) 100%
+        );
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+      }
+      .header-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .content {
+        padding: 16px;
+      }
+
+      .view {
+        display: none;
+      }
+      .view.active {
+        display: block;
+      }
+
+      .notice-box {
+        border-radius: 4px;
+        padding: 12px 14px;
+        font-size: 13.5px;
+        line-height: 1.4;
+        margin-bottom: 16px;
+      }
+      .notice-setup {
+        background-color: var(--bg-light-blue);
+        border: 1px solid var(--border-blue);
+        color: #1a446c;
+      }
+      .notice-progress {
+        background-color: var(--bg-pink);
+        border: 1px solid var(--border-pink);
+        color: #721c24;
+      }
+
+      /* Fixed to 8 columns since we swapped 25 & 45 for a single 30 button */
+      .presets-grid {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        border: 1px solid var(--primary-dark-red);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+      .preset-btn {
+        background-color: var(--primary-red);
+        color: #ffffff;
+        border: none;
+        border-right: 1px solid var(--primary-dark-red);
+        padding: 10px 0;
+        font-weight: bold;
+        font-size: 11px;
+        cursor: pointer;
+        text-align: center;
+        transition: background-color 0.2s;
+      }
+      .preset-btn:last-child {
+        border-right: none;
+      }
+      .preset-btn:hover,
+      .preset-btn.selected {
+        background-color: var(--primary-dark-red);
+      }
+
+      .custom-select-container {
+        position: relative;
+        margin-bottom: 24px;
+      }
+      .custom-select-trigger {
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background-color: #ffffff;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .custom-select-trigger::after {
+        content: "▼";
+        font-size: 10px;
+        color: #aaa;
+      }
+
+      .custom-dropdown-menu {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: #ffffff;
+        border: 1px solid #ccc;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        max-height: 180px;
+        overflow-y: auto;
+        z-index: 100;
+        display: none;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .custom-dropdown-menu.open {
+        display: block;
+      }
+
+      .search-box-wrapper {
+        padding: 6px;
+        position: sticky;
+        top: 0;
+        background: #ffffff;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        align-items: center;
+      }
+      .search-input {
+        width: 100%;
+        padding: 6px 8px;
+        box-sizing: border-box;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+
+      .dropdown-group-title {
+        font-size: 11px;
+        font-weight: bold;
+        color: #666;
+        padding: 8px 12px 4px 12px;
+        background-color: #f9f9f9;
+      }
+      .dropdown-option {
+        padding: 8px 12px;
+        font-size: 13.5px;
+        cursor: pointer;
+      }
+      .dropdown-option:hover {
+        background-color: #f5f5f5;
+      }
+
+      .btn {
+        width: 100%;
+        padding: 12px;
+        font-size: 14px;
+        font-weight: bold;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 10px;
+      }
+      .btn-primary {
+        background-color: var(--primary-red);
+        color: #ffffff;
+      }
+      .btn-primary:hover {
+        background-color: var(--primary-dark-red);
+      }
+      .btn-secondary {
+        background-color: #f0f0f0;
+        color: #333333;
+        border: 1px solid #ccc;
+      }
+      .btn-secondary:hover {
+        background-color: #e0e0e0;
+      }
+
+      .timer-progress-track {
+        position: relative;
+        width: 100%;
+        height: 54px;
+        border: 1px solid rgb(88, 14, 14);
+        background-color: #e0e0e0;
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 20px;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .timer-progress-fill {
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, #851410 0%, #b81d18 100%);
+        transition: width 1s linear;
+      }
+      .timer-text-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .timer-digits {
+        font-size: 26px;
+        font-weight: bold;
+        color: #222222;
+        letter-spacing: 0.5px;
+      }
+
+      /* Dashboard Menu Header Toggles */
+      .nav-link {
+        background: none;
+        border: none;
+        color: #ffffff;
+        font-size: 13.5px;
+        cursor: pointer;
+        font-weight: 500;
+        opacity: 0.75;
+        padding: 4px 8px;
+        transition: opacity 0.2s;
+      }
+      .nav-link.active {
+        opacity: 1;
+        font-weight: bold;
+      }
+
+      /* Schedule styles */
+      .schedule-day-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .schedule-day-tab {
+        padding: 6px 10px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f0f0f0;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .schedule-day-tab.active {
+        background: var(--primary-red);
+        color: white;
+        border-color: var(--primary-red);
+      }
+      .activity-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        padding: 8px;
+        border: 1px solid #e5e5ea;
+        border-radius: 4px;
+        background: #fafafa;
+      }
+      .activity-item input {
+        flex: 1;
+        padding: 6px 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      .activity-item input[type="number"] {
+        flex: 0 0 70px;
+      }
+      .activity-item .remove-btn {
+        background: none;
+        border: none;
+        color: #b81d18;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0 4px;
+      }
+      .add-activity-btn {
+        width: 100%;
+        padding: 8px;
+        font-size: 13px;
+        border: 1px dashed #aaa;
+        border-radius: 4px;
+        background: none;
+        cursor: pointer;
+        color: #555;
+        margin-bottom: 12px;
+      }
+      .add-activity-btn:hover {
+        background: #f5f5f5;
+      }
+      .schedule-save-btn {
+        width: 100%;
+        padding: 10px;
+        font-size: 14px;
+        font-weight: bold;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        background: var(--primary-red);
+        color: #ffffff;
+      }
+      .schedule-save-btn:hover {
+        background: var(--primary-dark-red);
+      }
+      .schedule-saved-msg {
+        text-align: center;
+        color: #2ecc71;
+        font-size: 13px;
+        margin-top: 8px;
+        display: none;
+      }
+
+      /* Dashboard progress bar styles */
+      .dashboard-progress {
+        margin-bottom: 16px;
+        padding: 10px 12px;
+        border: 1px solid #c7c7cc;
+        border-radius: 6px;
+        background: #f5f5f7;
+      }
+      .dashboard-progress-header {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .dashboard-progress-header span {
+        font-weight: 600;
+        color: #444;
+      }
+      .dashboard-progress-bar {
+        position: relative;
+        width: 100%;
+        height: 18px;
+        background: #e0e0e0;
+        border-radius: 3px;
+        overflow: visible;
+        margin-bottom: 2px;
+      }
+      .dashboard-progress-fill {
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          var(--primary-red),
+          var(--primary-dark-red)
+        );
+        border-radius: 3px;
+        transition: width 0.5s ease;
+      }
+      .dashboard-progress-fill.partial {
+        background: linear-gradient(90deg, #e74c3c, #e67e22);
+      }
+      .dashboard-progress-fill.good {
+        background: linear-gradient(90deg, var(--primary-red), #e05a55);
+      }
+      .dashboard-progress-fill.excellent {
+        background: linear-gradient(
+          90deg,
+          var(--primary-dark-red),
+          var(--primary-red)
+        );
+      }
+      .dashboard-progress-markers {
+        position: relative;
+        width: 100%;
+        height: 8px;
+        margin-bottom: 2px;
+      }
+      .dashboard-progress-marker {
+        position: absolute;
+        top: 0;
+        transform: translateX(-50%);
+        font-size: 9px;
+        color: #777;
+      }
+      .dashboard-progress-marker::before {
+        content: "|";
+        position: absolute;
+        top: -12px;
+        left: 50%;
+        font-size: 10px;
+        color: #999;
+      }
+      .dashboard-progress-message {
+        font-size: 12px;
+        color: var(--primary-dark-red);
+        margin-top: 6px;
+        font-weight: 500;
+      }
+
+      /* Tiny schedule toggle */
+      .schedule-toggle-link {
+        background: none;
+        border: none;
+        color: #999;
+        font-size: 11px;
+        cursor: pointer;
+        padding: 2px 4px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+        transition: color 0.2s;
+        display: inline-block;
+        width: auto;
+        box-shadow: none;
+        border-radius: 0;
+      }
+      .schedule-toggle-link:hover {
+        color: var(--primary-red);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div style="display: flex; gap: 8px; align-items: center">
+        <button id="navTimer" class="nav-link active">Timer</button>
+        <button id="navDashboard" class="nav-link">Dashboard</button>
+      </div>
+      <button
+        id="closeBtn"
+        style="
+          background: none;
+          border: none;
+          color: white;
+          font-size: 18px;
+          cursor: pointer;
+        "
+      >
+        &times;
+      </button>
+    </div>
+
+    <div class="content">
+      <div id="view-setup" class="view active">
+        <div class="notice-box notice-setup">
+          Please select how much time your session will take.
+        </div>
+
+        <div class="presets-grid">
+          <button class="preset-btn" data-mins="1">1</button>
+          <button class="preset-btn" data-mins="10">10</button>
+          <button class="preset-btn" data-mins="15">15</button>
+          <button class="preset-btn" data-mins="30">30</button>
+          <button class="preset-btn" data-mins="60">1h</button>
+          <button class="preset-btn" data-mins="180">3h</button>
+          <button class="preset-btn" data-mins="240">4h</button>
+          <button class="preset-btn" data-mins="360">6h</button>
+        </div>
+
+        <div class="custom-select-container">
+          <div class="custom-select-trigger" id="dropdownTrigger">
+            5 minutes
+          </div>
+          <div class="custom-dropdown-menu" id="dropdownMenu">
+            <div class="search-box-wrapper">
+              <input
+                type="text"
+                class="search-input"
+                id="dropdownSearch"
+                placeholder="Search durations..."
+              />
+            </div>
+            <div class="dropdown-group-title">RECENT</div>
+            <div id="recent-options-container"></div>
+
+            <div class="dropdown-group-title">POPULAR OPTIONS</div>
+            <div class="dropdown-option" data-value="5">5 minutes</div>
+            <div class="dropdown-option" data-value="10">10 minutes</div>
+            <div class="dropdown-option" data-value="15">15 minutes</div>
+            <div class="dropdown-option" data-value="30">30 minutes</div>
+            <div class="dropdown-option" data-value="60">1 hour</div>
+            <div class="dropdown-option" data-value="120">2 hours</div>
+            <div class="dropdown-option" data-value="180">3 hours</div>
+            <div class="dropdown-option" data-value="195">
+              3 hours 15 minutes
+            </div>
+
+            <div class="dropdown-option" data-value="210">
+              3 hours 30 minutes
+            </div>
+            <div class="dropdown-option" data-value="240">4 hours</div>
+            <div class="dropdown-option" data-value="255">
+              4 hours 15 minutes
+            </div>
+
+            <div class="dropdown-option" data-value="270">
+              4 hours 30 minutes
+            </div>
+            <div class="dropdown-option" data-value="285">
+              4 hours 45 minutes
+            </div>
+            <div class="dropdown-option" data-value="300">5 hours</div>
+            <div class="dropdown-option" data-value="315">
+              5 hours 15 minutes
+            </div>
+            <div class="dropdown-option" data-value="330">
+              5 hours 30 minutes
+            </div>
+            <div class="dropdown-option" data-value="345">
+              5 hours 45 minutes
+            </div>
+
+            <div class="dropdown-option" data-value="360">6 hours</div>
+          </div>
+        </div>
+
+        <button id="startBtn" class="btn btn-primary">Start Session</button>
+      </div>
+
+      <div id="view-progress" class="view">
+        <div id="progressNotice" class="notice-box notice-progress">
+          A pomodoro session is currently in progress.
+        </div>
+
+        <div class="timer-progress-track">
+          <div id="timerProgressFill" class="timer-progress-fill"></div>
+          <div class="timer-text-overlay">
+            <div id="timerDisplay" class="timer-digits" style="color: white">
+              00:00:00
+            </div>
+          </div>
+        </div>
+
+        <button id="endBtn" class="btn btn-secondary">End Session</button>
+        <button id="pauseBtn" class="btn btn-primary">Pause Session</button>
+      </div>
+
+      <!-- DASHBOARD VIEW -->
+      <div id="view-dashboard" class="view">
+        <!-- Progress bar replaces the Performance Analysis heading -->
+        <div id="dashboardProgress" class="dashboard-progress">
+          <div class="dashboard-progress-header">
+            <span id="progressWorked">Worked: 0.0h</span>
+            <span id="progressRemaining">Remaining: 0.0h</span>
+          </div>
+          <div class="dashboard-progress-bar">
+            <div
+              id="dashboardProgressFill"
+              class="dashboard-progress-fill"
+              style="width: 0%"
+            ></div>
+          </div>
+          <div class="dashboard-progress-markers">
+            <span
+              class="dashboard-progress-marker"
+              id="marker12"
+              style="left: 0%"
+              >12h</span
+            >
+            <span
+              class="dashboard-progress-marker"
+              id="marker14"
+              style="left: 0%"
+              >14h</span
+            >
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 14px">
+          <button
+            id="range7Btn"
+            class="btn btn-secondary"
+            style="
+              margin-bottom: 0;
+              padding: 8px 0;
+              font-size: 12px;
+              background-color: #e5e5ea;
+            "
+          >
+            Last 7 Days
+          </button>
+          <button
+            id="range30Btn"
+            class="btn btn-secondary"
+            style="margin-bottom: 0; padding: 8px 0; font-size: 12px"
+          >
+            Last 30 Days
+          </button>
+        </div>
+
+        <div
+          id="dashboardList"
+          style="
+            max-height: 210px;
+            overflow-y: auto;
+            border: 1px solid #e5e5ea;
+            border-radius: 4px;
+            padding: 4px 8px;
+          "
+        >
+          <!-- Day rows dynamically injected here -->
+        </div>
+
+        <!-- Tiny schedule toggle -->
+        <div style="text-align: left">
+          <button id="scheduleToggleBtn" class="schedule-toggle-link">
+            Edit Schedule
+          </button>
+        </div>
+
+        <!-- Schedule section (hidden by default) -->
+        <div id="dashboardSchedule" style="display: none">
+          <div
+            style="
+              padding: 10px;
+              background: #fff5f5;
+              border: 1px solid #f5c6cb;
+              border-radius: 4px;
+              margin-bottom: 12px;
+            "
+          >
+            <strong style="font-size: 13px; color: var(--primary-dark-red)"
+              >Weekly Schedule</strong
+            >
+            <div style="font-size: 11px; color: #666; margin-top: 2px">
+              Add time-consuming activities per day so we know how much time you
+              have for work.
+            </div>
+          </div>
+
+          <div class="schedule-day-tabs" id="scheduleDayTabs">
+            <!-- Dynamically generated -->
+          </div>
+
+          <div id="scheduleActivities">
+            <!-- Dynamically generated -->
+          </div>
+
+          <button id="addActivityBtn" class="add-activity-btn">
+            + Add Activity
+          </button>
+          <button id="scheduleSaveBtn" class="schedule-save-btn">
+            Save Schedule
+          </button>
+          <div id="scheduleSavedMsg" class="schedule-saved-msg">Saved!</div>
+
+          <!-- === BLOCKING SECTION (hidden inside schedule) === -->
+          <hr
+            style="margin: 20px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div style="padding: 0; margin-bottom: 12px">
+            <strong
+              style="
+                font-size: 14px;
+                color: var(--primary-dark-red);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >🚫 Blocked Sites</strong
+            >
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+              Add domain keywords to block entire sites (e.g. "facebook" blocks
+              facebook.com, facebook.xyz, etc.)
+            </div>
+
+            <div style="display: flex; gap: 6px; margin-bottom: 10px">
+              <input
+                type="text"
+                id="blockedPatternInput"
+                placeholder="e.g. facebook"
+                style="
+                  flex: 1;
+                  padding: 8px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <button
+                id="addBlockedPatternBtn"
+                style="
+                  padding: 8px 14px;
+                  background: var(--primary-red);
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-weight: bold;
+                "
+              >
+                Add
+              </button>
+            </div>
+
+            <div id="blockedPatternsList" style="margin-bottom: 8px">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div style="padding: 0">
+            <strong
+              style="
+                font-size: 14px;
+                color: var(--primary-dark-red);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >▶️ YouTube Channels</strong
+            >
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+              Block YouTube channels. Leave time empty for permanent block, or
+              set a daily max minutes.
+            </div>
+
+            <div
+              style="
+                display: flex;
+                gap: 6px;
+                margin-bottom: 10px;
+                flex-wrap: wrap;
+              "
+            >
+              <input
+                type="text"
+                id="youtubeChannelInput"
+                placeholder="Channel name or @handle"
+                style="
+                  flex: 2;
+                  min-width: 120px;
+                  padding: 8px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <input
+                type="number"
+                id="youtubeChannelMaxMins"
+                placeholder="Max mins (optional)"
+                style="
+                  flex: 1;
+                  min-width: 80px;
+                  padding: 8px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <button
+                id="addYouTubeChannelBtn"
+                style="
+                  padding: 8px 14px;
+                  background: var(--primary-red);
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-weight: bold;
+                "
+              >
+                Add
+              </button>
+            </div>
+
+            <div id="youtubeChannelsList" style="margin-bottom: 8px">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div style="padding: 0">
+            <strong
+              style="
+                font-size: 14px;
+                color: var(--primary-dark-red);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >🔑 Blocked Keywords</strong
+            >
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+              Block YouTube videos and search results containing these keywords
+              (e.g. "movie explained"). Case-insensitive, no bonus option.
+            </div>
+
+            <div style="display: flex; gap: 6px; margin-bottom: 10px">
+              <input
+                type="text"
+                id="blockedKeywordInput"
+                placeholder="e.g. movie explained"
+                style="
+                  flex: 1;
+                  padding: 8px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <button
+                id="addBlockedKeywordBtn"
+                style="
+                  padding: 8px 14px;
+                  background: var(--primary-red);
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-weight: bold;
+                "
+              >
+                Add
+              </button>
+            </div>
+
+            <div id="blockedKeywordsList" style="margin-bottom: 8px">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+          <!-- === END BLOCKING SECTION === -->
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

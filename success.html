@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pomodoro Session Completed!</title>
+    <script src="confetti.browser.min.js"></script>
+    <style>
+      :root {
+        --primary-red: #b81d18;
+        --primary-dark-red: #941310;
+        --bg-light-blue: #d4efff;
+        --border-blue: #a3daf8;
+        --bg-pink: #ffd2d6;
+        --border-pink: #fca8b0;
+        --text-color: #222;
+        --break-blue: #1d70b8;
+        --break-dark-blue: #155288;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f4f4f4 url("background.jpg") no-repeat center center fixed;
+        background-size: cover;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .card-modal {
+        background: white;
+        width: 420px;
+        min-height: 520px;
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        padding: 30px;
+        text-align: center;
+        box-sizing: border-box;
+      }
+
+      .avatar-img {
+        width: 140px;
+        height: 140px;
+        border-radius: 50%;
+        object-fit: cover;
+        margin-bottom: 16px;
+        border: 4px solid var(--primary-red);
+      }
+
+      h1 {
+        font-size: 24px;
+        color: var(--primary-red);
+        margin: 0 0 10px 0;
+      }
+
+      .congrats-text {
+        font-size: 15px;
+        color: #555;
+        margin-bottom: 24px;
+        line-line-height: 1.5;
+      }
+
+      .view-container {
+        border-top: 1px solid #eee;
+        padding-top: 20px;
+      }
+
+      .presets-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+
+      .preset-btn {
+        background: #f5f5f7;
+        border: 1px solid #e5e5ea;
+        border-radius: 6px;
+        padding: 12px 0;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        color: #333;
+        transition: all 0.15s ease;
+      }
+      .preset-btn:hover {
+        background: #e5e5ea;
+      }
+      .preset-btn.selected {
+        background: var(--primary-red);
+        color: white;
+        border-color: var(--primary-dark-red);
+      }
+
+      .custom-select-container {
+        position: relative;
+        margin-bottom: 24px;
+        text-align: left;
+      }
+
+      .custom-select-trigger {
+        background: #ffffff;
+        border: 1px solid #d1d1d6;
+        border-radius: 6px;
+        padding: 12px;
+        font-size: 14px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .custom-select-trigger::after {
+        content: "▼";
+        font-size: 10px;
+        color: #8e8e93;
+      }
+
+      .custom-dropdown-menu {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #d1d1d6;
+        border-radius: 6px;
+        margin-bottom: 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 10;
+        box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.1);
+      }
+      .custom-dropdown-menu.open {
+        display: block;
+      }
+
+      .search-box-wrapper {
+        padding: 8px;
+        border-bottom: 1px solid #f2f2f7;
+        position: sticky;
+        top: 0;
+        background: white;
+      }
+
+      .search-input {
+        width: calc(100% - 16px);
+        padding: 6px 8px;
+        border: 1px solid #d1d1d6;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+
+      .dropdown-group-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: #8e8e93;
+        padding: 8px 12px 4px 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .dropdown-option {
+        padding: 10px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .dropdown-option:hover {
+        background: #f2f2f7;
+      }
+
+      .action-buttons {
+        display: flex;
+        gap: 12px;
+      }
+
+      .btn {
+        flex: 1;
+        padding: 14px;
+        font-size: 15px;
+        font-weight: 600;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .btn-red {
+        background: var(--primary-red);
+        color: white;
+      }
+      .btn-red:hover {
+        background: var(--primary-dark-red);
+      }
+      .btn-blue {
+        background: var(--break-blue);
+        color: white;
+      }
+      .btn-blue:hover {
+        background: var(--break-dark-blue);
+      }
+
+      /* Live Timer styling on Break */
+      .break-timer-container {
+        display: none;
+        margin-top: 15px;
+        padding: 15px;
+        background: #f0f8ff;
+        border: 1px solid #cce5ff;
+        border-radius: 8px;
+      }
+      .break-timer-title {
+        font-size: 14px;
+        color: var(--break-blue);
+        font-weight: 600;
+        margin-bottom: 5px;
+      }
+      .break-timer-digits {
+        font-size: 32px;
+        font-weight: 700;
+        color: #333;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card-modal" id="view-success">
+      <img
+        src="ill_rested.jpg"
+        id="avatarDisplay"
+        class="avatar-img"
+        alt="Tomato Avatar"
+      />
+      <h1 id="headerTitle">Session Complete!</h1>
+      <p class="congrats-text" id="statusMessage">
+        Great work keeping your focus absolute! Take a well-deserved breathing
+        break before jumping back in.
+      </p>
+
+      <div class="view-container" id="view-widget">
+        <div id="selection-wrapper">
+          <div class="presets-grid">
+            <button class="preset-btn" data-mins="5">5</button>
+            <button class="preset-btn" data-mins="10">10</button>
+            <button class="preset-btn selected" data-mins="15">15</button>
+            <button class="preset-btn" data-mins="60">1h</button>
+            <button class="preset-btn" data-mins="120">2h</button>
+            <button class="preset-btn" data-mins="180">3h</button>
+            <button class="preset-btn" data-mins="240">4h</button>
+            <button class="preset-btn" data-mins="360">6h</button>
+          </div>
+
+          <div class="custom-select-container">
+            <div class="custom-select-trigger" id="dropdownTrigger">
+              15 minutes
+            </div>
+            <div class="custom-dropdown-menu" id="dropdownMenu">
+              <div class="search-box-wrapper">
+                <input
+                  type="text"
+                  class="search-input"
+                  id="dropdownSearch"
+                  placeholder="Search durations..."
+                />
+              </div>
+              <div class="dropdown-group-title">RECENT</div>
+              <div id="recent-options-container"></div>
+
+              <div class="dropdown-group-title">POPULAR OPTIONS</div>
+              <div class="dropdown-option" data-value="5">5 minutes</div>
+              <div class="dropdown-option" data-value="10">10 minutes</div>
+              <div class="dropdown-option" data-value="15">15 minutes</div>
+              <div class="dropdown-option" data-value="60">1 hour</div>
+              <div class="dropdown-option" data-value="120">2 hours</div>
+              <div class="dropdown-option" data-value="180">3 hours</div>
+              <div class="dropdown-option" data-value="240">4 hours</div>
+              <div class="dropdown-option" data-value="360">6 hours</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="break-timer-container" id="break-timer-container">
+          <div class="break-timer-title">RESTING PERIOD ACTIVE</div>
+          <div class="break-timer-digits" id="breakTimerDisplay">00:15:00</div>
+        </div>
+
+        <div class="action-buttons" style="margin-top: 20px">
+          <button id="breakBtn" class="btn btn-blue">Take Break</button>
+          <button id="startBtn" class="btn btn-red">Restart Timer</button>
+        </div>
+      </div>
+    </div>
+
+    <audio id="alertSound" src="completed.mp3" preload="auto"></audio>
+
+    <script src="success.js"></script>
+  </body>
+</html>
