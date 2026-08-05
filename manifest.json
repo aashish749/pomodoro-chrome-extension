@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Pomodoro Chrome Extension",
-  "version": "1.4",
-  "description": "Tailored Pomodoro timer extension with customizable settings.",
+  "version": "1.5",
+  "description": "Tailored Pomodoro timer extension with customizable settings and hourly analytics.",
   "permissions": [
     "alarms",
     "storage",
@@ -30,5 +30,11 @@
     "16": "logo.png",
     "48": "logo.png",
     "128": "logo.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["analytics.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

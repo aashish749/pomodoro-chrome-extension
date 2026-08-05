@@ -15,12 +15,15 @@
 
       body {
         width: 396px;
+        max-width: 396px;
+        min-width: 396px;
         font-family:
           -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         margin: 0;
         padding: 0;
         background-color: #ffffff;
         color: var(--text-color);
+        overflow-x: hidden;
       }
 
       .header {
@@ -44,6 +47,9 @@
 
       .content {
         padding: 16px;
+        max-width: 396px;
+        overflow-x: hidden;
+        box-sizing: border-box;
       }
 
       .view {
@@ -434,6 +440,113 @@
       .schedule-toggle-link:hover {
         color: var(--primary-red);
       }
+
+      /* ===== ACCOMPLISHMENT BUTTON ===== */
+      .accomplishment-btn {
+        background: none;
+        border: none;
+        color: #999;
+        font-size: 12px;
+        font-weight: 400;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+      }
+      .accomplishment-btn:hover {
+        color: var(--primary-dark-red);
+      }
+
+      /* ===== ACHIEVEMENTS SECTION ===== */
+      .achievements-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .achievements-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--primary-dark-red);
+        margin: 0;
+      }
+      .achievements-back-btn {
+        background: none;
+        border: none;
+        color: #b81d18;
+        font-size: 13px;
+        cursor: pointer;
+        padding: 4px 8px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 500;
+      }
+      .achievements-back-btn:hover {
+        color: var(--primary-dark-red);
+      }
+
+      .achievements-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .honor-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid #e5e5ea;
+        border-radius: 8px;
+        background: #fafafa;
+      }
+
+      .honor-icon {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+        flex-shrink: 0;
+      }
+
+      .honor-content {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .honor-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-color);
+        margin: 0 0 4px 0;
+      }
+
+      .honor-details {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+      }
+
+      .honor-details .highlight {
+        color: var(--primary-dark-red);
+        font-weight: 600;
+      }
+
+      .honor-badge-container .highlight {
+        color: #b81d18;
+      }
+
+      .honor-streak-container .highlight {
+        color: #e67e22;
+      }
+
+      .achievements-coming-soon {
+        text-align: center;
+        padding: 16px;
+        color: #999;
+        font-size: 13px;
+        margin-top: 8px;
+      }
     </style>
   </head>
   <body>
@@ -548,7 +661,172 @@
         </div>
 
         <button id="endBtn" class="btn btn-secondary">End Session</button>
-        <button id="pauseBtn" class="btn btn-primary">Pause Session</button>
+        <div style="position: relative; margin-bottom: 10px">
+          <div style="display: flex; gap: 0; position: relative">
+            <button
+              id="pauseBtn"
+              class="btn btn-primary"
+              style="flex: 1; margin-bottom: 0; border-radius: 4px 0 0 4px"
+            >
+              Pause Session
+            </button>
+            <button
+              id="pauseOptionsBtn"
+              style="
+                width: 36px;
+                padding: 12px 0;
+                background: #941310;
+                color: white;
+                border: none;
+                border-radius: 0 4px 4px 0;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: bold;
+                display: none;
+              "
+            >
+              ▾
+            </button>
+          </div>
+          <div
+            id="pauseDurationSelector"
+            style="
+              display: none;
+              position: absolute;
+              bottom: 100%;
+              left: 0;
+              right: 0;
+              background: white;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.1);
+              z-index: 100;
+              padding: 8px;
+            "
+          >
+            <div
+              style="
+                font-size: 11px;
+                color: #666;
+                margin-bottom: 6px;
+                font-weight: 600;
+              "
+            >
+              Pause for:
+            </div>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap">
+              <button
+                class="pause-duration-option"
+                data-mins="5"
+                style="
+                  flex: 1;
+                  min-width: 40px;
+                  padding: 6px 4px;
+                  background: #f0f0f0;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                5m
+              </button>
+              <button
+                class="pause-duration-option"
+                data-mins="10"
+                style="
+                  flex: 1;
+                  min-width: 40px;
+                  padding: 6px 4px;
+                  background: #f0f0f0;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                10m
+              </button>
+              <button
+                class="pause-duration-option"
+                data-mins="15"
+                style="
+                  flex: 1;
+                  min-width: 40px;
+                  padding: 6px 4px;
+                  background: #f0f0f0;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                15m
+              </button>
+              <button
+                class="pause-duration-option"
+                data-mins="30"
+                style="
+                  flex: 1;
+                  min-width: 40px;
+                  padding: 6px 4px;
+                  background: #f0f0f0;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                30m
+              </button>
+              <button
+                class="pause-duration-option"
+                data-mins="60"
+                style="
+                  flex: 1;
+                  min-width: 40px;
+                  padding: 6px 4px;
+                  background: #f0f0f0;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                1h
+              </button>
+            </div>
+            <div style="display: flex; gap: 4px; margin-top: 6px">
+              <input
+                type="number"
+                id="customPauseMins"
+                placeholder="Custom"
+                min="1"
+                style="
+                  flex: 1;
+                  padding: 6px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 11px;
+                "
+              />
+              <button
+                id="customPauseBtn"
+                style="
+                  padding: 6px 10px;
+                  background: var(--primary-red);
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  font-size: 11px;
+                  cursor: pointer;
+                "
+              >
+                Go
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- DASHBOARD VIEW -->
@@ -582,26 +860,148 @@
           </div>
         </div>
 
-        <div style="display: flex; gap: 8px; margin-bottom: 14px">
+        <div
+          style="
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+            position: relative;
+          "
+        >
           <button
             id="range7Btn"
             class="btn btn-secondary"
             style="
               margin-bottom: 0;
+              margin-right: auto;
+              margin-left: 0;
               padding: 8px 0;
               font-size: 12px;
               background-color: #e5e5ea;
+              flex: 1;
+              text-align: center;
             "
           >
-            Last 7 Days
+            &nbsp;&nbsp; Last 7 Days
           </button>
           <button
             id="range30Btn"
             class="btn btn-secondary"
-            style="margin-bottom: 0; padding: 8px 0; font-size: 12px"
+            style="margin-bottom: 0; padding: 8px 0; font-size: 12px; flex: 1"
           >
             Last 30 Days
           </button>
+          <button
+            id="rangeCaretBtn"
+            style="
+              margin-bottom: 0;
+              padding: 8px 6px;
+              font-size: 10px;
+              background: #f0f0f0;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              cursor: pointer;
+              color: #666;
+            "
+          >
+            ▾
+          </button>
+          <div
+            id="rangeDropdown"
+            style="
+              display: none;
+              position: absolute;
+              top: 100%;
+              right: 0;
+              background: white;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+              z-index: 100;
+              min-width: 140px;
+            "
+          >
+            <button
+              class="range-dropdown-option"
+              data-range="this-week"
+              style="
+                display: block;
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 12px;
+                text-align: left;
+              "
+            >
+              This Week
+            </button>
+            <button
+              class="range-dropdown-option"
+              data-range="last-week"
+              style="
+                display: block;
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 12px;
+                text-align: left;
+              "
+            >
+              Last Week
+            </button>
+            <button
+              class="range-dropdown-option"
+              data-range="this-month"
+              style="
+                display: block;
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 12px;
+                text-align: left;
+              "
+            >
+              This Month
+            </button>
+            <button
+              class="range-dropdown-option"
+              data-range="last-month"
+              style="
+                display: block;
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 12px;
+                text-align: left;
+              "
+            >
+              Last Month
+            </button>
+            <button
+              class="range-dropdown-option"
+              data-range="90"
+              style="
+                display: block;
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 12px;
+                text-align: left;
+              "
+            >
+              Last 90 Days
+            </button>
+          </div>
         </div>
 
         <div
@@ -618,10 +1018,50 @@
         </div>
 
         <!-- Tiny schedule toggle -->
-        <div style="text-align: left">
-          <button id="scheduleToggleBtn" class="schedule-toggle-link">
-            Edit Schedule
-          </button>
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          "
+        >
+          <div style="text-align: left; display: flex; gap: 8px">
+            <button id="scheduleToggleBtn" class="schedule-toggle-link">
+              Edit Schedule
+            </button>
+            <button
+              id="analyticsBtn"
+              class="schedule-toggle-link"
+              style="color: #999"
+            >
+              Analytics
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <button
+              id="accomplishmentBtn"
+              class="accomplishment-btn"
+              title="View your achievements"
+            >
+              Achievements
+            </button>
+          </div>
+        </div>
+
+        <!-- Achievements section (shown when Accomplishment button clicked) -->
+        <div id="achievementsSection" class="view" style="display: none">
+          <div class="achievements-header">
+            <h3 class="achievements-title">Accomplishments</h3>
+            <button id="closeAchievementsBtn" class="achievements-back-btn">
+              <span>←</span> Back
+            </button>
+          </div>
+
+          <div id="achievementsList" class="achievements-list">
+            <!-- Honor cards will be injected here -->
+          </div>
+
+          <div class="achievements-coming-soon">More honors coming soon...</div>
         </div>
 
         <!-- Schedule section (hidden by default) -->
@@ -659,6 +1099,78 @@
             Save Schedule
           </button>
           <div id="scheduleSavedMsg" class="schedule-saved-msg">Saved!</div>
+
+          <!-- === STREAK SECTION (inside schedule) === -->
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div id="streakSection" style="padding: 0; margin-bottom: 12px">
+            <strong
+              style="
+                font-size: 14px;
+                color: var(--primary-dark-red);
+                display: block;
+                margin-bottom: 4px;
+              "
+              >Streak</strong
+            >
+            <div
+              id="streakDetails"
+              style="font-size: 12px; color: #555; line-height: 1.8"
+            >
+              <!-- Dynamically populated -->
+            </div>
+            <div
+              id="streakRecoverSection"
+              style="
+                display: none;
+                margin-top: 10px;
+                padding: 10px;
+                background: #fff8e1;
+                border: 1px solid #ffe0b2;
+                border-radius: 4px;
+              "
+            >
+              <div style="font-size: 12px; color: #e65100; margin-bottom: 8px">
+                ⚠️ Your streak broke yesterday! Use 1 streak saver to recover
+                it?
+              </div>
+              <div style="display: flex; gap: 8px">
+                <button
+                  id="useStreakSaverBtn"
+                  style="
+                    flex: 1;
+                    padding: 8px;
+                    background: #e67e22;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: bold;
+                  "
+                >
+                  Use Streak Saver
+                </button>
+                <button
+                  id="dismissStreakSaverBtn"
+                  style="
+                    flex: 1;
+                    padding: 8px;
+                    background: #f0f0f0;
+                    color: #555;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                  "
+                >
+                  No, keep it
+                </button>
+              </div>
+            </div>
+          </div>
 
           <!-- === BLOCKING SECTION (hidden inside schedule) === -->
           <hr
@@ -726,7 +1238,7 @@
                 display: block;
                 margin-bottom: 4px;
               "
-              >▶️ YouTube Channels</strong
+              >YouTube Channels</strong
             >
             <div style="font-size: 11px; color: #666; margin-bottom: 8px">
               Block YouTube channels. Leave time empty for permanent block, or
@@ -799,7 +1311,8 @@
                 display: block;
                 margin-bottom: 4px;
               "
-              >🔑 Blocked Keywords</strong
+            >
+              Blocked Keywords</strong
             >
             <div style="font-size: 11px; color: #666; margin-bottom: 8px">
               Block YouTube videos and search results containing these keywords
@@ -839,6 +1352,97 @@
               <!-- Dynamically populated -->
             </div>
           </div>
+          <!-- === END BLOCKING SECTION === -->
+
+          <!-- === PAUSE SETTINGS SECTION === -->
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div style="padding: 0; margin-bottom: 8px">
+            <strong
+              style="
+                font-size: 14px;
+                color: #5c6bc0;
+                display: block;
+                margin-bottom: 4px;
+              "
+              >⏸️ Pause Settings</strong
+            >
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+              Set max pauses per session and default pause duration.
+            </div>
+            <div
+              style="
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                margin-bottom: 8px;
+              "
+            >
+              <label style="font-size: 12px; color: #555; white-space: nowrap"
+                >Max pauses:</label
+              >
+              <input
+                type="number"
+                id="maxPausesInput"
+                value="3"
+                min="1"
+                max="20"
+                style="
+                  width: 60px;
+                  padding: 6px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <label style="font-size: 12px; color: #555; white-space: nowrap"
+                >Default pause (min):</label
+              >
+              <input
+                type="number"
+                id="defaultPauseDurationInput"
+                value="10"
+                min="1"
+                max="120"
+                style="
+                  width: 60px;
+                  padding: 6px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                  font-size: 13px;
+                "
+              />
+              <button
+                id="savePauseSettingsBtn"
+                style="
+                  padding: 6px 12px;
+                  background: #5c6bc0;
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-size: 12px;
+                  font-weight: bold;
+                "
+              >
+                Save
+              </button>
+            </div>
+            <div
+              id="pauseSettingsSavedMsg"
+              style="
+                display: none;
+                font-size: 12px;
+                color: #2ecc71;
+                margin-top: 4px;
+              "
+            >
+              Pause settings saved!
+            </div>
+          </div>
+
           <!-- === END BLOCKING SECTION === -->
         </div>
       </div>

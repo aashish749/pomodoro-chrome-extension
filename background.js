@@ -2,7 +2,7 @@
 let timerInterval = null;
 let remainingTime = 0;
 let totalDurationMins = 0;
-let currentState = "IDLE"; // IDLE, RUNNING, PAUSED, OVERTIME
+let currentState = "IDLE"; // IDLE, RUNNING, PAUSED, OVERTIME, PAUSED_OVERTIME
 let isBreakSession = false;
 let overtimeSeconds = 0; // Tracks extra time spent past break allocation
 
@@ -10,17 +10,87 @@ let overtimeSeconds = 0; // Tracks extra time spent past break allocation
 let endTime = 0;
 let pauseTimeLeft = 0;
 
+// Pause timer variables
+let pauseCount = 0; // Number of pauses in current session
+let pauseDurationSecs = 0; // How long the user set for the pause timer
+let resumeTimerEndTime = 0; // When the resume timer expires
+let resumeOvertimeSeconds = 0; // How long past the resume timer they've gone
+
 // Initialize badge formatting
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
   updateBlockingRules();
+  initializePauseSettings();
 });
+
+function initializePauseSettings() {
+  chrome.storage.local.get(["pauseSettings"], (res) => {
+    if (!res.pauseSettings) {
+      chrome.storage.local.set({
+        pauseSettings: {
+          maxPauses: 3,
+          defaultPauseDuration: 10, // minutes
+        },
+      });
+    }
+  });
+}
 
 // Returns date key with 6-hour offset (so sessions up to 6AM count toward previous day)
 function getDateKey(date) {
   const d = new Date(date);
   d.setHours(d.getHours() - 6);
   return d.toISOString().split("T")[0];
+}
+
+// Simple YYYY-MM-DD from a Date object (no offset, for walking backwards through history keys)
+function formatDateKey(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// Splits session minutes across hours of the day.
+// startTime and endTime are timestamps in ms.
+// Returns an object mapping hour (0-23) -> total minutes attributed.
+function splitSessionAcrossHours(startTime, endTime) {
+  const totalMs = endTime - startTime;
+  if (totalMs <= 0) return {};
+
+  const totalMinutes = Math.round(totalMs / 60000);
+  const result = {};
+
+  // Walk minute by minute, attributing each minute to its hour bucket
+  for (let i = 0; i < totalMinutes; i++) {
+    const minuteTimestamp = startTime + i * 60000;
+    const d = new Date(minuteTimestamp);
+    const hour = d.getHours();
+    result[hour] = (result[hour] || 0) + 1;
+  }
+
+  return result;
+}
+
+// Save hourly data alongside daily work history
+function saveHourlyData(startTime, endTime) {
+  const hourSplits = splitSessionAcrossHours(startTime, endTime);
+  if (Object.keys(hourSplits).length === 0) return;
+
+  chrome.storage.local.get(["hourlyHistory"], (res) => {
+    const hourlyHistory = res.hourlyHistory || {};
+
+    for (const [hourStr, minutes] of Object.entries(hourSplits)) {
+      const dateKey = getDateKey(new Date(startTime));
+      if (!hourlyHistory[dateKey]) {
+        hourlyHistory[dateKey] = {};
+      }
+      hourlyHistory[dateKey][hourStr] =
+        (hourlyHistory[dateKey][hourStr] || 0) + minutes;
+    }
+
+    chrome.storage.local.set({ hourlyHistory });
+  });
 }
 
 // Splits session minutes across days based on the 6AM boundary.
@@ -55,6 +125,10 @@ function saveStateToStorage() {
       endTime,
       pauseTimeLeft,
       overtimeSeconds,
+      pauseCount,
+      pauseDurationSecs,
+      resumeTimerEndTime,
+      resumeOvertimeSeconds,
     },
   });
 }
@@ -70,6 +144,10 @@ chrome.storage.local.get(["timerPersistentState"], (res) => {
     endTime = state.endTime;
     pauseTimeLeft = state.pauseTimeLeft;
     overtimeSeconds = state.overtimeSeconds || 0;
+    pauseCount = state.pauseCount || 0;
+    pauseDurationSecs = state.pauseDurationSecs || 0;
+    resumeTimerEndTime = state.resumeTimerEndTime || 0;
+    resumeOvertimeSeconds = state.resumeOvertimeSeconds || 0;
 
     if (currentState === "RUNNING") {
       const now = Date.now();
@@ -82,6 +160,13 @@ chrome.storage.local.get(["timerPersistentState"], (res) => {
     } else if (currentState === "PAUSED") {
       chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
       updateBadgeText(Math.round(pauseTimeLeft / 1000));
+      // Start the resume timer engine if we have a pause duration set
+      if (pauseDurationSecs > 0) {
+        startResumeTimerEngine();
+      }
+    } else if (currentState === "PAUSED_OVERTIME") {
+      chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
+      startResumeTimerEngine();
     } else if (currentState === "OVERTIME") {
       startOvertimeEngine();
     }
@@ -158,8 +243,93 @@ function startOvertimeEngine() {
   saveStateToStorage();
 }
 
+// ===== RESUME TIMER ENGINE =====
+// Counts down from pauseDurationSecs, then counts up in resumeOvertime
+
+function startResumeTimerEngine() {
+  clearIntervalEngine();
+
+  if (currentState === "PAUSED" || currentState === "PAUSED_OVERTIME") {
+    // Show the main timer remaining time on badge with grey background
+    chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
+    updateBadgeText(Math.round(pauseTimeLeft / 1000));
+
+    timerInterval = setInterval(() => {
+      if (currentState !== "PAUSED" && currentState !== "PAUSED_OVERTIME")
+        return;
+
+      const now = Date.now();
+      const remaining = Math.round((resumeTimerEndTime - now) / 1000);
+
+      if (currentState === "PAUSED") {
+        if (remaining > 0) {
+          // Normal pause - grey background with main timer time
+          chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
+          const mainTimeLeft = Math.round(pauseTimeLeft / 1000);
+          updateBadgeText(mainTimeLeft);
+          if (remaining % 5 === 0) saveStateToStorage();
+        } else {
+          // Resume timer expired! Switch to PAUSED_OVERTIME
+          currentState = "PAUSED_OVERTIME";
+          resumeOvertimeSeconds = 0;
+          // Change badge to yellow to alert user
+          chrome.action.setBadgeBackgroundColor({ color: "#e67e22" });
+          // Apply deduction (once per day)
+          applyPauseDeduction();
+          saveStateToStorage();
+          notifyStateChange();
+        }
+      } else if (currentState === "PAUSED_OVERTIME") {
+        // Overtime pause - yellow background to alert user
+        chrome.action.setBadgeBackgroundColor({ color: "#e67e22" });
+        const mainTimeLeft = Math.round(pauseTimeLeft / 1000);
+        updateBadgeText(mainTimeLeft);
+        resumeOvertimeSeconds = Math.round((now - resumeTimerEndTime) / 1000);
+        if (resumeOvertimeSeconds % 5 === 0) saveStateToStorage();
+      }
+    }, 1000);
+  }
+}
+
+function applyPauseDeduction() {
+  const todayKey = getDateKey(new Date());
+  chrome.storage.local.get(["workHistory", "pauseDeductionDays"], (res) => {
+    const deductionDays = res.pauseDeductionDays || {};
+    // Can only deduct once per day
+    if (deductionDays[todayKey]) return;
+
+    let deductionMinutes = 0;
+    if (totalDurationMins >= 180) {
+      deductionMinutes = 60; // 1 hour for sessions >= 3 hours
+    } else if (totalDurationMins >= 60) {
+      deductionMinutes = 30; // 30 minutes for sessions >= 1 hour
+    }
+
+    if (deductionMinutes > 0) {
+      const history = res.workHistory || {};
+      history[todayKey] = Math.max(
+        0,
+        (history[todayKey] || 0) - deductionMinutes,
+      );
+      deductionDays[todayKey] = true;
+      chrome.storage.local.set(
+        { workHistory: history, pauseDeductionDays: deductionDays },
+        () => {
+          updateStreakData();
+        },
+      );
+    }
+  });
+}
+
 function handleSessionCompletion() {
   clearIntervalEngine();
+
+  // Reset pause-related state
+  pauseCount = 0;
+  pauseDurationSecs = 0;
+  resumeTimerEndTime = 0;
+  resumeOvertimeSeconds = 0;
 
   chrome.tabs.create({ url: chrome.runtime.getURL("success.html") });
 
@@ -182,11 +352,394 @@ function handleSessionCompletion() {
       }
       chrome.storage.local.set({ workHistory: history }, () => {
         saveStateToStorage();
+        updateStreakData();
       });
     });
+
+    // Save hourly breakdown
+    saveHourlyData(startTime, endTime);
+
+    // Check and award badge if today's total >= 16 hours
+    checkAndAwardBadge();
+    // Update best week/month data
+    updateBestWeekMonth();
   }
 
   notifyStateChange();
+}
+
+// ===== STREAK SYSTEM =====
+
+const STREAK_THRESHOLD_MINUTES = 720; // 12 hours
+const STREAK_SAVER_INTERVAL = 14; // 14 days = 1 streak saver
+
+// Initialize streak data if not present
+function ensureStreakData(callback) {
+  chrome.storage.local.get(["streakData"], (res) => {
+    const data = res.streakData || {
+      currentStreak: 0,
+      longestStreak: 0,
+      streakSavers: 0,
+      lastStreakDate: null,
+      progressToNextSaver: 0,
+      brokenStreakDate: null, // dateKey where streak first broke (for 1-day grace check)
+    };
+    if (callback) callback(data);
+  });
+}
+
+// Recursively build the streak from workHistory, scanning backwards day by day
+function calculateStreakFromHistory(history) {
+  const todayKey = getDateKey(new Date());
+  let streak = 0;
+  let saverIntervalCount = 0;
+  let saversEarned = 0;
+  let lastStreakDate = null;
+  let brokenStreakDate = null;
+
+  // Check if today qualifies first
+  const todayMinutes = history[todayKey] || 0;
+  if (todayMinutes >= STREAK_THRESHOLD_MINUTES) {
+    streak = 1;
+    saverIntervalCount = 1;
+    lastStreakDate = todayKey;
+
+    // Walk backwards from yesterday
+    let walkDate = new Date(todayKey);
+    walkDate.setDate(walkDate.getDate() - 1);
+    for (let i = 1; i < 365; i++) {
+      const dateKey = formatDateKey(walkDate);
+      const minutes = history[dateKey] || 0;
+      if (minutes >= STREAK_THRESHOLD_MINUTES) {
+        streak++;
+        saverIntervalCount++;
+        if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
+          saversEarned++;
+          saverIntervalCount = 0;
+        }
+        walkDate.setDate(walkDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+  } else {
+    // Today doesn't qualify. Check if yesterday qualified.
+    // If so, the streak is "broken" as of today (1-day gap, recoverable)
+    const yesterdayKey = getDateKey(new Date(Date.now() - 86400000));
+    const yesterdayMinutes = history[yesterdayKey] || 0;
+
+    if (yesterdayMinutes >= STREAK_THRESHOLD_MINUTES) {
+      // Streak was active as of yesterday, now broken today (1-day gap)
+      streak = 1;
+      saverIntervalCount = 1;
+      lastStreakDate = yesterdayKey;
+      brokenStreakDate = todayKey;
+
+      // Walk backwards from the day before yesterday
+      let walkDate = new Date(yesterdayKey);
+      walkDate.setDate(walkDate.getDate() - 1);
+      for (let i = 1; i < 365; i++) {
+        const dateKey = formatDateKey(walkDate);
+        const minutes = history[dateKey] || 0;
+        if (minutes >= STREAK_THRESHOLD_MINUTES) {
+          streak++;
+          saverIntervalCount++;
+          if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
+            saversEarned++;
+            saverIntervalCount = 0;
+          }
+          walkDate.setDate(walkDate.getDate() - 1);
+        } else {
+          break;
+        }
+      }
+    } else {
+      // No active streak. Walk backwards to find the most recent qualifying day
+      let walkDate = new Date(todayKey);
+      walkDate.setDate(walkDate.getDate() - 1);
+      for (let i = 1; i < 365; i++) {
+        const dateKey = formatDateKey(walkDate);
+        const minutes = history[dateKey] || 0;
+        if (minutes >= STREAK_THRESHOLD_MINUTES) {
+          // Found the most recent qualifying day - start streak from here
+          streak = 1;
+          saverIntervalCount = 1;
+          lastStreakDate = dateKey;
+
+          // Walk further back
+          walkDate.setDate(walkDate.getDate() - 1);
+          for (let j = 1; j < 365; j++) {
+            const backDateKey = formatDateKey(walkDate);
+            const backMinutes = history[backDateKey] || 0;
+            if (backMinutes >= STREAK_THRESHOLD_MINUTES) {
+              streak++;
+              saverIntervalCount++;
+              if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
+                saversEarned++;
+                saverIntervalCount = 0;
+              }
+              walkDate.setDate(walkDate.getDate() - 1);
+            } else {
+              break;
+            }
+          }
+          break;
+        }
+        walkDate.setDate(walkDate.getDate() - 1);
+      }
+    }
+  }
+
+  return {
+    currentStreak: streak,
+    longestStreak: streak, // We'll track the longest separately
+    streakSavers: saversEarned,
+    lastStreakDate,
+    progressToNextSaver: saverIntervalCount,
+    brokenStreakDate,
+  };
+}
+
+// Update streak data after workHistory changes
+function updateStreakData(callback) {
+  chrome.storage.local.get(["workHistory", "streakData"], (res) => {
+    const history = res.workHistory || {};
+    const prevStreakData = res.streakData || {
+      currentStreak: 0,
+      longestStreak: 0,
+      streakSavers: 0,
+      lastStreakDate: null,
+      progressToNextSaver: 0,
+      brokenStreakDate: null,
+    };
+
+    // Recalculate streak from history
+    const calculated = calculateStreakFromHistory(history);
+
+    // Preserve the longest streak ever achieved
+    const longestStreak = Math.max(
+      prevStreakData.longestStreak || 0,
+      calculated.currentStreak,
+    );
+
+    // Preserve previously earned streak savers (don't lose them on recalculation)
+    const streakSavers = Math.max(
+      prevStreakData.streakSavers || 0,
+      calculated.streakSavers,
+    );
+
+    // Preserve brokenStreakDate from previous data if it's still valid
+    let brokenStreakDate = calculated.brokenStreakDate;
+    if (!brokenStreakDate && prevStreakData.brokenStreakDate) {
+      const todayKey = getDateKey(new Date());
+      const brokenDate = new Date(prevStreakData.brokenStreakDate);
+      const todayDate = new Date(todayKey);
+      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
+      if (diffDays === 1) {
+        brokenStreakDate = prevStreakData.brokenStreakDate;
+      }
+    }
+
+    const streakData = {
+      ...calculated,
+      longestStreak,
+      streakSavers,
+      brokenStreakDate,
+    };
+
+    chrome.storage.local.set({ streakData }, () => {
+      if (callback) callback(streakData);
+    });
+  });
+}
+
+function checkAndAwardBadge() {
+  const todayKey = getDateKey(new Date());
+  chrome.storage.local.get(["workHistory", "badgeData"], (res) => {
+    const history = res.workHistory || {};
+    const todayMinutes = history[todayKey] || 0;
+    if (todayMinutes >= 960) {
+      let badgeData = res.badgeData || {
+        monthly: 0,
+        lifetime: 0,
+        lastBadgeDate: null,
+        badgeMonth: null,
+      };
+      const today = new Date();
+      const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+
+      if (badgeData.lastBadgeDate !== todayKey) {
+        badgeData.lifetime = (badgeData.lifetime || 0) + 1;
+        badgeData.lastBadgeDate = todayKey;
+
+        if (badgeData.badgeMonth !== currentMonth) {
+          badgeData.monthly = 1;
+          badgeData.badgeMonth = currentMonth;
+        } else {
+          badgeData.monthly = (badgeData.monthly || 0) + 1;
+        }
+
+        chrome.storage.local.set({ badgeData });
+      }
+    }
+  });
+}
+
+// Migration: scan existing workHistory and award missing badges for past days
+function migrateBadgesFromHistory() {
+  chrome.storage.local.get(["workHistory", "badgeData"], (res) => {
+    const history = res.workHistory || {};
+    let badgeData = res.badgeData || {
+      monthly: 0,
+      lifetime: 0,
+      lastBadgeDate: null,
+      badgeMonth: null,
+    };
+
+    // Skip if already migrated
+    if (badgeData.migrated) return;
+
+    let awardedDays = 0;
+    // Keep track of which dates have already been awarded (from lastBadgeDate)
+    const awardedDates = new Set();
+    if (badgeData.lastBadgeDate) awardedDates.add(badgeData.lastBadgeDate);
+
+    // Scan all workHistory days
+    for (const [dateKey, mins] of Object.entries(history)) {
+      if (mins >= 960 && !awardedDates.has(dateKey)) {
+        awardedDays++;
+        awardedDates.add(dateKey);
+
+        // Update monthly count for that month
+        const d = new Date(dateKey + "T06:00:00");
+        if (!isNaN(d.getTime())) {
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          if (monthKey === badgeData.badgeMonth) {
+            badgeData.monthly = (badgeData.monthly || 0) + 1;
+          } else {
+            badgeData.monthly = 1;
+            badgeData.badgeMonth = monthKey;
+          }
+        }
+      }
+    }
+
+    if (awardedDays > 0) {
+      badgeData.lifetime = (badgeData.lifetime || 0) + awardedDays;
+      // Set lastBadgeDate to today's key if today qualifies
+      const todayKey = getDateKey(new Date());
+      if (history[todayKey] >= 960 && !awardedDates.has(todayKey)) {
+        badgeData.lastBadgeDate = todayKey;
+      }
+    }
+
+    badgeData.migrated = true;
+    chrome.storage.local.set({ badgeData });
+  });
+}
+
+function updateBestWeekMonth() {
+  chrome.storage.local.get(
+    ["workHistory", "hourlyHistory", "bestData"],
+    (res) => {
+      const history = res.workHistory || {};
+      const hourlyHistory = res.hourlyHistory || {};
+      const bestData = res.bestData || {
+        bestWeekTotal: 0,
+        bestWeekHourly: null,
+        bestMonthTotal: 0,
+        bestMonthHourly: null,
+        bestMonthLabel: null,
+        bestWeekLabel: null,
+      };
+
+      const now = new Date();
+      const todayKey = getDateKey(now);
+
+      // Calculate this week's total (last 7 days)
+      let thisWeekTotal = 0;
+      const thisWeekHourly = new Array(24).fill(0);
+      const thisWeekCount = new Array(24).fill(0);
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const key = getDateKey(d);
+        thisWeekTotal += history[key] || 0;
+        if (hourlyHistory[key]) {
+          for (let h = 0; h < 24; h++) {
+            const mins = hourlyHistory[key][h] || 0;
+            if (mins > 0) {
+              thisWeekHourly[h] += mins;
+              thisWeekCount[h]++;
+            }
+          }
+        }
+      }
+
+      // Calculate this month's total
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      let thisMonthTotal = 0;
+      const thisMonthHourly = new Array(24).fill(0);
+      const thisMonthCount = new Array(24).fill(0);
+      for (const [key, mins] of Object.entries(history)) {
+        const d = new Date(key + "T06:00:00");
+        if (d >= monthStart && d <= now) {
+          thisMonthTotal += mins;
+          if (hourlyHistory[key]) {
+            for (let h = 0; h < 24; h++) {
+              const m = hourlyHistory[key][h] || 0;
+              if (m > 0) {
+                thisMonthHourly[h] += m;
+                thisMonthCount[h]++;
+              }
+            }
+          }
+        }
+      }
+
+      let changed = false;
+
+      // Check if this week is the best
+      if (thisWeekTotal > (bestData.bestWeekTotal || 0)) {
+        bestData.bestWeekTotal = thisWeekTotal;
+        bestData.bestWeekHourly = thisWeekHourly.map((t, h) =>
+          thisWeekCount[h] > 0 ? Math.round(t / thisWeekCount[h]) : 0,
+        );
+        const weekStart = new Date(now);
+        weekStart.setDate(weekStart.getDate() - 6);
+        bestData.bestWeekLabel = `${formatDateKey(weekStart)} to ${todayKey}`;
+        changed = true;
+      }
+
+      // Check if this month is the best
+      if (thisMonthTotal > (bestData.bestMonthTotal || 0)) {
+        bestData.bestMonthTotal = thisMonthTotal;
+        bestData.bestMonthHourly = thisMonthHourly.map((t, h) =>
+          thisMonthCount[h] > 0 ? Math.round(t / thisMonthCount[h]) : 0,
+        );
+        const months = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+        bestData.bestMonthLabel = `${months[now.getMonth()]} ${now.getFullYear()}`;
+        changed = true;
+      }
+
+      if (changed) {
+        chrome.storage.local.set({ bestData });
+      }
+    },
+  );
 }
 
 function notifyStateChange() {
@@ -344,8 +897,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
         // Check if URL changed (navigated to a different video)
         if (trackData.lastCheckedUrl && trackData.lastCheckedUrl !== tab.url) {
-          // URL changed — the content script will re-send CHECK_VIDEO_CHANNEL
-          // Don't stop tracking, just update the URL
           trackData.lastCheckedUrl = tab.url;
         } else if (!trackData.lastCheckedUrl) {
           trackData.lastCheckedUrl = tab.url;
@@ -430,7 +981,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // ===== KEYWORD BLOCKING =====
-// New message: keywords are stored as array of strings with deleteClicks
 async function getBlockedKeywords() {
   const res = await chrome.storage.local.get(["blockedKeywords"]);
   return res.blockedKeywords || [];
@@ -477,6 +1027,14 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Get yesterday's date key for recovery check
+function getYesterdayKey() {
+  const d = new Date();
+  d.setHours(d.getHours() - 6);
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().split("T")[0];
+}
+
 // Main message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START") {
@@ -484,6 +1042,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     remainingTime = totalDurationMins * 60;
     isBreakSession = message.isBreak || false;
     overtimeSeconds = 0;
+    pauseCount = 0;
+    pauseDurationSecs = 0;
+    resumeTimerEndTime = 0;
+    resumeOvertimeSeconds = 0;
 
     endTime = Date.now() + remainingTime * 1000;
 
@@ -493,18 +1055,87 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
   } else if (message.type === "TOGGLE_PAUSE") {
     if (currentState === "RUNNING") {
-      currentState = "PAUSED";
-      pauseTimeLeft = endTime - Date.now();
-      clearIntervalEngine();
-      chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
-    } else if (currentState === "PAUSED") {
+      // Use default pause duration from settings (10 minutes)
+      chrome.storage.local.get(["pauseSettings"], (res) => {
+        const settings = res.pauseSettings || {
+          maxPauses: 3,
+          defaultPauseDuration: 10,
+        };
+        if (pauseCount >= settings.maxPauses) {
+          sendResponse({ success: false, reason: "Max pauses reached" });
+          return;
+        }
+        pauseCount++;
+        currentState = "PAUSED";
+        pauseTimeLeft = endTime - Date.now();
+        pauseDurationSecs = settings.defaultPauseDuration * 60;
+        resumeTimerEndTime = Date.now() + pauseDurationSecs * 1000;
+        clearIntervalEngine();
+        chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
+        startResumeTimerEngine();
+        saveStateToStorage();
+        notifyStateChange();
+        sendResponse({
+          success: true,
+          pauseCount,
+          maxPauses: settings.maxPauses,
+          pauseDurationSecs,
+        });
+      });
+      return true;
+    } else if (
+      currentState === "PAUSED" ||
+      currentState === "PAUSED_OVERTIME"
+    ) {
+      // Resume the timer
       currentState = "RUNNING";
       endTime = Date.now() + pauseTimeLeft;
+      pauseDurationSecs = 0;
+      resumeTimerEndTime = 0;
+      resumeOvertimeSeconds = 0;
+      clearIntervalEngine();
       startTimerEngine();
+      saveStateToStorage();
+      notifyStateChange();
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, reason: "Cannot pause in current state" });
     }
-    saveStateToStorage();
-    notifyStateChange();
-    sendResponse({ success: true });
+  } else if (message.type === "PAUSE_WITH_DURATION") {
+    // User sets a custom pause duration
+    if (currentState !== "RUNNING") {
+      sendResponse({ success: false, reason: "Timer is not running" });
+      return;
+    }
+    chrome.storage.local.get(["pauseSettings"], (res) => {
+      const settings = res.pauseSettings || {
+        maxPauses: 3,
+        defaultPauseDuration: 10,
+      };
+      if (pauseCount >= settings.maxPauses) {
+        sendResponse({ success: false, reason: "Max pauses reached" });
+        return;
+      }
+      pauseCount++;
+      const durationMins =
+        message.durationMinutes || settings.defaultPauseDuration;
+      currentState = "PAUSED";
+      pauseTimeLeft = endTime - Date.now();
+      pauseDurationSecs = durationMins * 60;
+      resumeTimerEndTime = Date.now() + pauseDurationSecs * 1000;
+      clearIntervalEngine();
+      chrome.action.setBadgeBackgroundColor({ color: "#8e8e93" });
+      startResumeTimerEngine();
+      saveStateToStorage();
+      notifyStateChange();
+      sendResponse({
+        success: true,
+        pauseCount,
+        maxPauses: settings.maxPauses,
+        pauseDurationSecs,
+      });
+    });
+    return true;
   } else if (message.type === "END") {
     clearIntervalEngine();
 
@@ -536,8 +1167,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               history[dateKey] = (history[dateKey] || 0) + attributedMins;
             }
           }
-          chrome.storage.local.set({ workHistory: history });
+          chrome.storage.local.set({ workHistory: history }, () => {
+            updateStreakData();
+          });
         }
+
+        // Save hourly breakdown for END handler
+        const savedStartTime = savedEndTime - savedTotalMins * 60 * 1000;
+        saveHourlyData(savedStartTime, now);
       }
 
       currentState = "IDLE";
@@ -547,6 +1184,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pauseTimeLeft = 0;
       isBreakSession = false;
       overtimeSeconds = 0;
+      pauseCount = 0;
+      pauseDurationSecs = 0;
+      resumeTimerEndTime = 0;
+      resumeOvertimeSeconds = 0;
 
       chrome.action.setBadgeText({ text: "" });
       chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -565,6 +1206,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseTimeLeft = 0;
     isBreakSession = false;
     overtimeSeconds = 0;
+    pauseCount = 0;
+    pauseDurationSecs = 0;
+    resumeTimerEndTime = 0;
+    resumeOvertimeSeconds = 0;
 
     chrome.action.setBadgeText({ text: "" });
     chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -584,6 +1229,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           endTime = saved.endTime;
           pauseTimeLeft = saved.pauseTimeLeft;
           overtimeSeconds = saved.overtimeSeconds || 0;
+          pauseCount = saved.pauseCount || 0;
+          pauseDurationSecs = saved.pauseDurationSecs || 0;
+          resumeTimerEndTime = saved.resumeTimerEndTime || 0;
+          resumeOvertimeSeconds = saved.resumeOvertimeSeconds || 0;
         }
       }
 
@@ -598,11 +1247,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             totalDurationMins: 0,
             isBreak: false,
             overtimeSeconds: 0,
+            pauseCount: 0,
           });
           return;
         } else {
           remainingTime = Math.round((endTime - now) / 1000);
         }
+      }
+
+      // Get resume timer remaining time
+      let resumeTimerRemaining = 0;
+      let resumeTimerOvertime = 0;
+      if (currentState === "PAUSED" && resumeTimerEndTime > 0) {
+        resumeTimerRemaining = Math.max(
+          0,
+          Math.round((resumeTimerEndTime - Date.now()) / 1000),
+        );
+      } else if (currentState === "PAUSED_OVERTIME") {
+        resumeTimerOvertime = resumeOvertimeSeconds || 0;
       }
 
       sendResponse({
@@ -611,6 +1273,113 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         totalDurationMins: totalDurationMins,
         isBreak: isBreakSession,
         overtimeSeconds: overtimeSeconds,
+        pauseCount: pauseCount,
+        pauseDurationSecs: pauseDurationSecs,
+        resumeTimerRemaining: resumeTimerRemaining,
+        resumeTimerOvertime: resumeTimerOvertime,
+      });
+    });
+    return true;
+  }
+
+  // ===== PAUSE SETTINGS MESSAGES =====
+  else if (message.type === "GET_PAUSE_SETTINGS") {
+    chrome.storage.local.get(["pauseSettings"], (res) => {
+      sendResponse({
+        settings: res.pauseSettings || {
+          maxPauses: 3,
+          defaultPauseDuration: 10,
+        },
+      });
+    });
+    return true;
+  } else if (message.type === "SAVE_PAUSE_SETTINGS") {
+    chrome.storage.local.set({ pauseSettings: message.settings }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // ===== STREAK MESSAGES =====
+  else if (message.type === "GET_STREAK_DATA") {
+    // Wait for streak data to be updated before responding
+    // This ensures we return fresh data, not stale cached values
+    updateStreakData(() => {
+      chrome.storage.local.get(["streakData", "workHistory"], (res) => {
+        const streakData = res.streakData || {
+          currentStreak: 0,
+          longestStreak: 0,
+          streakSavers: 0,
+          lastStreakDate: null,
+          progressToNextSaver: 0,
+          brokenStreakDate: null,
+        };
+        const history = res.workHistory || {};
+        const todayKey = getDateKey(new Date());
+        const yesterdayKey = getYesterdayKey();
+        const todayMinutes = history[todayKey] || 0;
+
+        let canRecover = false;
+        if (streakData.brokenStreakDate && streakData.streakSavers > 0) {
+          const brokenDate = new Date(streakData.brokenStreakDate);
+          const todayDate = new Date(todayKey);
+          const diffDays = Math.round((todayDate - brokenDate) / 86400000);
+          if (diffDays === 1) {
+            canRecover = true;
+          }
+        }
+
+        sendResponse({
+          streakData,
+          todayMinutes,
+          canRecover,
+        });
+      });
+    });
+    return true;
+  } else if (message.type === "RECOVER_STREAK") {
+    chrome.storage.local.get(["streakData", "workHistory"], (res) => {
+      const streakData = res.streakData || {
+        currentStreak: 0,
+        longestStreak: 0,
+        streakSavers: 0,
+        lastStreakDate: null,
+        progressToNextSaver: 0,
+        brokenStreakDate: null,
+      };
+      const history = res.workHistory || {};
+      const todayKey = getDateKey(new Date());
+      const yesterdayKey = getYesterdayKey();
+
+      if (!streakData.brokenStreakDate || streakData.streakSavers <= 0) {
+        sendResponse({
+          success: false,
+          reason: "Cannot recover streak at this time.",
+        });
+        return;
+      }
+
+      const brokenDate = new Date(streakData.brokenStreakDate);
+      const todayDate = new Date(todayKey);
+      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
+      if (diffDays !== 1) {
+        sendResponse({
+          success: false,
+          reason: "Recovery window has expired.",
+        });
+        return;
+      }
+
+      streakData.streakSavers -= 1;
+      streakData.lastStreakDate = yesterdayKey;
+      streakData.brokenStreakDate = null;
+
+      if (streakData.currentStreak > streakData.longestStreak) {
+        streakData.longestStreak = streakData.currentStreak;
+      }
+
+      chrome.storage.local.set({ streakData }, () => {
+        sendResponse({ success: true, streakData });
       });
     });
     return true;
@@ -753,7 +1522,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   } else if (message.type === "CHECK_VIDEO_CHANNEL") {
-    // Called from content script (youtube-checker.js) when a video page loads
     const tabId = sender.tab ? sender.tab.id : null;
     if (!tabId) {
       sendResponse({ blocked: false });
@@ -800,12 +1568,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           redirectToBlocked(tabId, matchedKey);
           sendResponse({ blocked: true });
         } else {
-          // Start or continue tracking — don't stop previous tracking!
-          // Only start if not already tracking this tab
           if (!youtubeActiveTabs[tabId]) {
             startYouTubeTimeTracking(tabId, matchedKey);
           } else {
-            // Update the channel key if it changed
             youtubeActiveTabs[tabId].channelKey = matchedKey;
           }
           checkChannelBlock(matchedKey, data, tabId);
@@ -870,7 +1635,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   } else if (message.type === "CHECK_VIDEO_KEYWORDS") {
-    // Called from content script when a video title or search query matches
     const tabId = sender.tab ? sender.tab.id : null;
     if (!tabId) {
       sendResponse({ blocked: false });
@@ -886,22 +1650,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const matchedKeyword = keywordStrs.find((kw) => text.includes(kw));
 
       if (matchedKeyword) {
-        // Redirect to blocked page with keyword param (no bonus button)
         const params = `?keyword=${encodeURIComponent(matchedKeyword)}`;
         chrome.tabs.update(tabId, {
           url: chrome.runtime.getURL(`blocked.html${params}`),
         });
         sendResponse({ blocked: true, keyword: matchedKeyword });
       } else {
-        // No keyword matched in the text, but send back keywords anyway for results hiding on search pages
         sendResponse({
           blocked: false,
           keywords: keywordStrs,
         });
 
-        // If this is a search results page (URL contains /results), tell content script to hide matching results
         if (message.url && message.url.includes("/results")) {
-          // Send keywords to the content script for hiding search results
           chrome.tabs
             .sendMessage(tabId, {
               type: "HIDE_BLOCKED_RESULTS",
@@ -911,6 +1671,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
     });
+    return true;
+  }
+
+  // ===== BADGE MESSAGES =====
+  else if (message.type === "GET_BADGE_DATA") {
+    migrateBadgesFromHistory();
+    chrome.storage.local.get(["badgeData"], (res) => {
+      // Re-fetch after migration might have updated data
+      chrome.storage.local.get(["badgeData"], (res2) => {
+        sendResponse({
+          badgeData: res2.badgeData || {
+            monthly: 0,
+            lifetime: 0,
+            lastBadgeDate: null,
+            badgeMonth: null,
+          },
+        });
+      });
+    });
+    return true;
+  }
+
+  // ===== ANALYTICS MESSAGES =====
+  else if (message.type === "GET_HOURLY_ANALYTICS") {
+    chrome.storage.local.get(["hourlyHistory", "workHistory"], (res) => {
+      sendResponse({
+        hourlyHistory: res.hourlyHistory || {},
+        workHistory: res.workHistory || {},
+      });
+    });
+    return true;
+  } else if (message.type === "GET_BEST_DATA") {
+    chrome.storage.local.get(["bestData"], (res) => {
+      sendResponse({ bestData: res.bestData || {} });
+    });
+    return true;
+  } else if (message.type === "OPEN_ANALYTICS") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("analytics.html") });
+    sendResponse({ success: true });
     return true;
   }
 

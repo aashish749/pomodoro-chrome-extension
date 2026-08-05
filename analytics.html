@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Productivity Analytics</title>
+    <script src="chart.umd.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f5f5f7;
+        color: #222;
+        padding: 0;
+        margin: 0;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px 16px;
+      }
+
+      .header {
+        background: linear-gradient(180deg, #b81d18 0%, #941310 100%);
+        color: #fff;
+        padding: 20px 16px;
+        text-align: center;
+      }
+      .header h1 {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .header p {
+        font-size: 13px;
+        opacity: 0.85;
+        margin-top: 4px;
+      }
+
+      .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 16px 0;
+      }
+      .summary-card {
+        background: #fff;
+        border-radius: 8px;
+        padding: 14px 12px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      .summary-card .emoji {
+        font-size: 22px;
+      }
+      .summary-card .label {
+        font-size: 11px;
+        color: #888;
+        margin-top: 4px;
+      }
+      .summary-card .value {
+        font-size: 15px;
+        font-weight: 700;
+        color: #333;
+        margin-top: 2px;
+      }
+      .summary-card .sub {
+        font-size: 11px;
+        color: #999;
+        margin-top: 2px;
+      }
+
+      .chart-card {
+        background: #fff;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      .chart-card h3 {
+        font-size: 14px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 12px;
+      }
+      .chart-card .chart-container {
+        position: relative;
+        width: 100%;
+      }
+      .chart-card .chart-container.bar-chart {
+        height: 220px;
+      }
+      .chart-card .chart-container.line-chart {
+        height: 200px;
+      }
+
+      /* Heatmap styles */
+      .heatmap-container {
+        overflow-x: auto;
+      }
+      .heatmap-table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 600px;
+        font-size: 11px;
+      }
+      .heatmap-table th {
+        padding: 4px 2px;
+        text-align: center;
+        font-weight: 600;
+        color: #666;
+        font-size: 10px;
+      }
+      .heatmap-table td {
+        padding: 2px;
+        text-align: center;
+        border: 1px solid #eee;
+        width: 3.5%;
+      }
+      .heatmap-table td .cell-content {
+        width: 100%;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        color: rgba(0, 0, 0, 0.5);
+      }
+      .heatmap-table .day-label {
+        font-size: 10px;
+        color: #888;
+        font-weight: 600;
+        padding-right: 6px;
+        text-align: right;
+        width: 30px;
+        border: none;
+      }
+      .heatmap-legend {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        margin-top: 8px;
+        font-size: 10px;
+        color: #888;
+      }
+      .heatmap-legend .legend-box {
+        width: 14px;
+        height: 14px;
+        border-radius: 2px;
+        border: 1px solid #eee;
+      }
+
+      .no-data {
+        text-align: center;
+        padding: 60px 20px;
+        color: #999;
+      }
+      .no-data .big-emoji {
+        font-size: 48px;
+        margin-bottom: 12px;
+      }
+      .no-data p {
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 100px 20px;
+        color: #999;
+        font-size: 14px;
+      }
+
+      .week-toggle {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .week-toggle button {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f0f0f0;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s;
+      }
+      .week-toggle button.active {
+        background: #b81d18;
+        color: #fff;
+        border-color: #b81d18;
+      }
+
+      /* Filter bar styles */
+      .filter-bar {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .filter-bar label {
+        font-size: 12px;
+        color: #555;
+        font-weight: 600;
+      }
+      .filter-bar select {
+        padding: 6px 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 12px;
+        background: #fff;
+      }
+      .filter-bar .filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 12px;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .filter-bar .filter-chip.active {
+        background: #b81d18;
+        color: #fff;
+        border-color: #b81d18;
+      }
+      .filter-bar .filter-chip:hover {
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Productivity Analytics</h1>
+      <p>See which hours of the day you're most productive</p>
+    </div>
+
+    <div class="container" id="app">
+      <div class="loading" id="loadingState">
+        <div class="big-emoji">⏳</div>
+        <p>Loading your analytics...</p>
+      </div>
+
+      <div id="mainContent" style="display: none">
+        <!-- Summary Cards -->
+        <div class="summary-cards" id="summaryCards">
+          <div class="summary-card">
+            <div class="label">Peak Hour</div>
+            <div class="value" id="peakHour">--</div>
+            <div class="sub" id="peakHourSub">--</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Weakest Hour</div>
+            <div class="value" id="weakHour">--</div>
+            <div class="sub" id="weakHourSub">--</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Best Day</div>
+            <div class="value" id="bestDay">--</div>
+            <div class="sub" id="bestDaySub">--</div>
+          </div>
+        </div>
+
+        <!-- Time Range Selector for Bar Chart & Heatmap -->
+        <div class="filter-bar">
+          <label>Show data for:</label>
+          <button class="filter-chip" data-range="today">Today</button>
+          <button class="filter-chip active" data-range="week">
+            This Week
+          </button>
+          <button class="filter-chip" data-range="month">This Month</button>
+          <button class="filter-chip" data-range="90">Last 90 Days</button>
+        </div>
+
+        <!-- Sleep Hour Filter -->
+        <div class="filter-bar">
+          <label>🌙 Sleep:</label>
+          <select id="hourFilterStart">
+            <option value="0">12AM</option>
+            <option value="1">1AM</option>
+            <option value="2">2AM</option>
+            <option value="3">3AM</option>
+            <option value="4">4AM</option>
+            <option value="5">5AM</option>
+            <option value="6" selected>6AM (day start)</option>
+            <option value="7">7AM</option>
+            <option value="8">8AM</option>
+            <option value="9">9AM</option>
+            <option value="10">10AM</option>
+            <option value="11">11AM</option>
+            <option value="12">12PM</option>
+            <option value="13">1PM</option>
+            <option value="14">2PM</option>
+            <option value="15">3PM</option>
+            <option value="16">4PM</option>
+            <option value="17">5PM</option>
+            <option value="18">6PM</option>
+            <option value="19">7PM</option>
+            <option value="20">8PM</option>
+            <option value="21">9PM</option>
+            <option value="22">10PM</option>
+            <option value="23">11PM</option>
+          </select>
+          <span style="font-size: 12px; color: #888">to</span>
+          <select id="hourFilterEnd">
+            <option value="0">12AM</option>
+            <option value="1">1AM</option>
+            <option value="2">2AM</option>
+            <option value="3">3AM</option>
+            <option value="4">4AM</option>
+            <option value="5" selected>5AM (next day)</option>
+            <option value="6">6AM</option>
+            <option value="7">7AM</option>
+            <option value="8">8AM</option>
+            <option value="9">9AM</option>
+            <option value="10">10AM</option>
+            <option value="11">11AM</option>
+            <option value="12">12PM</option>
+            <option value="13">1PM</option>
+            <option value="14">2PM</option>
+            <option value="15">3PM</option>
+            <option value="16">4PM</option>
+            <option value="17">5PM</option>
+            <option value="18">6PM</option>
+            <option value="19">7PM</option>
+            <option value="20">8PM</option>
+            <option value="21">9PM</option>
+            <option value="22">10PM</option>
+            <option value="23">11PM</option>
+          </select>
+          <span style="font-size: 12px; color: #888">(excluded)</span>
+          <button
+            id="resetFilterBtn"
+            style="
+              padding: 4px 10px;
+              background: #f0f0f0;
+              border: 1px solid #ddd;
+              border-radius: 4px;
+              font-size: 11px;
+              cursor: pointer;
+              color: #555;
+            "
+          >
+            Reset
+          </button>
+        </div>
+
+        <!-- Bar Chart: Avg Minutes Per Hour -->
+        <div class="chart-card">
+          <h3>Average Minutes Worked Per Hour</h3>
+          <div class="chart-container bar-chart">
+            <canvas id="barChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Heatmap: Hour × Day of Week -->
+        <div class="chart-card">
+          <h3>Hourly Productivity Heatmap</h3>
+          <p style="font-size: 11px; color: #999; margin-bottom: 10px">
+            Darker green = more productive. See patterns across days & hours.
+          </p>
+          <div class="heatmap-container" id="heatmapContainer">
+            <!-- Dynamically built -->
+          </div>
+          <div class="heatmap-legend">
+            <span>Low</span>
+            <div class="legend-box" style="background: #fee5d9"></div>
+            <div class="legend-box" style="background: #fcae91"></div>
+            <div class="legend-box" style="background: #fb6a4a"></div>
+            <div class="legend-box" style="background: #de2d26"></div>
+            <div class="legend-box" style="background: #a50f15"></div>
+            <span>High</span>
+          </div>
+        </div>
+
+        <!-- Week toggle + Line Charts -->
+        <div class="chart-card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <h3>Daily Trend</h3>
+            <div class="week-toggle">
+              <button id="trend7Btn" class="active" data-days="7">
+                7 days
+              </button>
+              <button id="trend30Btn" data-days="30">30 days</button>
+              <button id="trend90Btn" data-days="90">90 days</button>
+            </div>
+          </div>
+          <div class="chart-container line-chart">
+            <canvas id="lineChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Week Comparison -->
+        <div class="chart-card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+            "
+          >
+            <h3>Hourly Comparison</h3>
+            <select
+              id="compareMode"
+              style="
+                padding: 4px 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 11px;
+                background: #fff;
+              "
+            >
+              <option value="this-last-week">This Week vs Last Week</option>
+              <option value="this-last-month">This Month vs Last Month</option>
+              <option value="best-week">vs Best Week</option>
+              <option value="best-month">vs Best Month</option>
+            </select>
+          </div>
+          <p
+            style="font-size: 11px; color: #999; margin-bottom: 10px"
+            id="compareSubtitle"
+          >
+            Compare your hourly pattern week-over-week.
+          </p>
+          <div class="chart-container bar-chart">
+            <canvas id="compareChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Badge Section -->
+        <div class="chart-card" id="badgeSection" style="display: none">
+          <h3>🏅 Badges</h3>
+          <p style="font-size: 11px; color: #999; margin-bottom: 10px">
+            Earn a badge each day you work 16+ hours.
+          </p>
+          <div style="display: flex; gap: 20px">
+            <div>
+              <span
+                style="font-size: 24px; font-weight: 700; color: #b81d18"
+                id="badgeMonthly"
+                >0</span
+              >
+              <span style="font-size: 12px; color: #888; margin-left: 4px"
+                >this month</span
+              >
+            </div>
+            <div>
+              <span
+                style="font-size: 24px; font-weight: 700; color: #b81d18"
+                id="badgeLifetime"
+                >0</span
+              >
+              <span style="font-size: 12px; color: #888; margin-left: 4px"
+                >lifetime</span
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="no-data" id="noDataState" style="display: none">
+        <div class="big-emoji">�</div>
+        <p>
+          <strong>No data yet!</strong><br />
+          Complete some Pomodoro sessions and come back here to see your hourly
+          productivity breakdown.
+        </p>
+      </div>
+    </div>
+
+    <script src="analytics.js"></script>
+  </body>
+</html>
