@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pomodoro Chrome Extension",
-  "version": "1.5",
+  "version": "1.6",
   "description": "Tailored Pomodoro timer extension with customizable settings and hourly analytics.",
   "permissions": [
     "alarms",
@@ -34,6 +34,20 @@
   "web_accessible_resources": [
     {
       "resources": ["analytics.html"],
+      "matches": ["<all_urls>"]
+    },
+    {
+      "resources": [
+        "Badges(1).png",
+        "streak (1).png",
+        "badges/10hours_at_leastfor30days.png",
+        "badges/14hoursdailyforamonth.png",
+        "badges/bronze_medal_for_16hours_singledayshift.png",
+        "badges/complete 6 hours without single pause.png",
+        "badges/godlmedal_for_1000hours.png",
+        "badges/musk_badge_for_100hours_plus_perweek.png",
+        "badges/silverfor_3consecutive_16hours_days.png"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

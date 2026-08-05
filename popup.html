@@ -343,6 +343,66 @@
         display: none;
       }
 
+      /* ===== ACHIEVEMENTS STYLES ===== */
+      .honor-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid #e5e5ea;
+        border-radius: 8px;
+        background: #fafafa;
+        margin-bottom: 10px;
+      }
+      .honor-card.honor-locked {
+        opacity: 0.75;
+        filter: grayscale(80%);
+      }
+      .honor-streak-container,
+      .honor-badge-container {
+        background: linear-gradient(135deg, #fff5f5 0%, #ffecec 100%);
+      }
+      .honor-icon {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+        flex-shrink: 0;
+      }
+      .honor-content {
+        flex: 1;
+        min-width: 0;
+      }
+      .honor-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 6px 0;
+        color: #222;
+      }
+      .honor-title.locked-title {
+        color: #999;
+      }
+      .honor-details {
+        line-height: 1.4;
+      }
+      .honor-details .locked-label {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .progress-bar {
+        height: 4px;
+        background: #e5e5ea;
+        border-radius: 2px;
+        width: 100%;
+        margin-top: 6px;
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #2ecc71 0%, #27ae60 100%);
+        border-radius: 2px;
+        transition: width 0.3s ease;
+      }
+
       /* Dashboard progress bar styles */
       .dashboard-progress {
         margin-bottom: 16px;
@@ -1061,7 +1121,9 @@
             <!-- Honor cards will be injected here -->
           </div>
 
-          <div class="achievements-coming-soon">More honors coming soon...</div>
+          <div class="achievements-coming-soon">
+            Only top 0.01 people can accomplish these...
+          </div>
         </div>
 
         <!-- Schedule section (hidden by default) -->

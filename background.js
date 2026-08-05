@@ -338,6 +338,7 @@ function handleSessionCompletion() {
     startOvertimeEngine();
   } else {
     const sessionMinutes = totalDurationMins;
+    const sessionPauses = pauseCount; // Track pauses for flow achievement
 
     currentState = "IDLE";
     chrome.action.setBadgeText({ text: "✔" });
@@ -360,7 +361,7 @@ function handleSessionCompletion() {
     saveHourlyData(startTime, endTime);
 
     // Check and award badge if today's total >= 16 hours
-    checkAndAwardBadge();
+    checkAndAwardBadge(sessionMinutes, sessionPauses);
     // Update best week/month data
     updateBestWeekMonth();
   }
@@ -553,18 +554,128 @@ function updateStreakData(callback) {
   });
 }
 
-function checkAndAwardBadge() {
+function calculateProgressData(history) {
+  const now = new Date();
+  const nowDate = new Date();
+
+  // Total lifetime hours
+  let totalHours = 0;
+  for (const mins of Object.values(history)) {
+    totalHours += mins / 60;
+  }
+
+  // Weekly hours (last 7 days)
+  let weeklyHours = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(nowDate);
+    d.setDate(d.getDate() - i);
+    const key = getDateKey(d);
+    weeklyHours += (history[key] || 0) / 60;
+  }
+
+  // Consecutive 10+ hour days
+  let consecutive10HrDays = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(nowDate);
+    d.setDate(d.getDate() - i);
+    const key = getDateKey(d);
+    if ((history[key] || 0) >= 600) {
+      consecutive10HrDays++;
+    } else {
+      break;
+    }
+  }
+
+  // Consecutive 14+ hour days
+  let consecutive14HrDays = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(nowDate);
+    d.setDate(d.getDate() - i);
+    const key = getDateKey(d);
+    if ((history[key] || 0) >= 840) {
+      consecutive14HrDays++;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    totalHours: Math.round(totalHours * 10) / 10,
+    weeklyHours: Math.round(weeklyHours * 10) / 10,
+    consecutive10HrDays,
+    consecutive14HrDays,
+  };
+}
+
+function checkAndAwardBadge(sessionMinutes, sessionPauses) {
   const todayKey = getDateKey(new Date());
   chrome.storage.local.get(["workHistory", "badgeData"], (res) => {
     const history = res.workHistory || {};
+    let badgeData = res.badgeData || {
+      monthly: 0,
+      lifetime: 0,
+      lastBadgeDate: null,
+      badgeMonth: null,
+    };
+
+    // Initialize new achievement fields if not present
+    if (badgeData.day1_30day_completed === undefined)
+      badgeData.day1_30day_completed = false;
+    if (badgeData.day1_30day_14hr_completed === undefined)
+      badgeData.day1_30day_14hr_completed = false;
+    if (badgeData.thousand_hours_completed === undefined)
+      badgeData.thousand_hours_completed = false;
+    if (badgeData.elon_musk_weekly_completed === undefined)
+      badgeData.elon_musk_weekly_completed = false;
+    if (badgeData.bronze_16hr_count === undefined)
+      badgeData.bronze_16hr_count = 0;
+    if (badgeData.six_hour_flow_count === undefined)
+      badgeData.six_hour_flow_count = 0;
+    if (badgeData.silver_3x16_count === undefined)
+      badgeData.silver_3x16_count = 0;
+
     const todayMinutes = history[todayKey] || 0;
+
+    // ===== 6 HOURS WITHOUT PAUSE - DEEP FLOW (Repeatable) =====
+    // Track when a 6+ hour session is completed with zero pauses
+    if (sessionMinutes >= 360 && (sessionPauses || 0) === 0) {
+      badgeData.six_hour_flow_count = (badgeData.six_hour_flow_count || 0) + 1;
+    }
+
+    // ===== 16-HOUR BRONZE MEDAL (Repeatable) =====
     if (todayMinutes >= 960) {
-      let badgeData = res.badgeData || {
-        monthly: 0,
-        lifetime: 0,
-        lastBadgeDate: null,
-        badgeMonth: null,
-      };
+      badgeData.bronze_16hr_count = (badgeData.bronze_16hr_count || 0) + 1;
+    }
+
+    // Calculate progress data for display
+    const progress = calculateProgressData(history);
+
+    // Store progress for UI display
+    badgeData.progress = {
+      threeZeroChallenge: {
+        current: progress.consecutive10HrDays,
+        target: 30,
+        description: "10+ hours daily",
+      },
+      threeZeroChallenge14: {
+        current: progress.consecutive14HrDays,
+        target: 30,
+        description: "14+ hours daily",
+      },
+      thousandHours: {
+        current: Math.floor(progress.totalHours),
+        target: 1000,
+        description: "Total hours",
+      },
+      elonMusk: {
+        current: Math.floor(progress.weeklyHours),
+        target: 100,
+        description: "Weekly hours",
+      },
+    };
+
+    // ===== MONTHLY/LIFETIME BADGE (Existing logic for 16+ hours) =====
+    if (todayMinutes >= 960) {
       const today = new Date();
       const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
@@ -578,10 +689,78 @@ function checkAndAwardBadge() {
         } else {
           badgeData.monthly = (badgeData.monthly || 0) + 1;
         }
-
-        chrome.storage.local.set({ badgeData });
       }
     }
+
+    // ===== 1,000-HOUR CLUB (One-time) =====
+    let totalLifetimeHours = 0;
+    for (const [dateKey, mins] of Object.entries(history)) {
+      totalLifetimeHours += mins / 60;
+    }
+    if (totalLifetimeHours >= 1000 && !badgeData.thousand_hours_completed) {
+      badgeData.thousand_hours_completed = true;
+    }
+
+    // ===== ELON MUSK 100+ HOURS PER WEEK (One-time) =====
+    const now = new Date();
+    let weeklyTotal = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = getDateKey(d);
+      weeklyTotal += history[key] || 0;
+    }
+    if (weeklyTotal >= 6000 && !badgeData.elon_musk_weekly_completed) {
+      // 6000 mins = 100 hours
+      badgeData.elon_musk_weekly_completed = true;
+    }
+
+    // ===== DAY 1 - 30 DAYS OF 10+ HOURS (One-time) =====
+    if (!badgeData.day1_30day_completed) {
+      const thirtyDayKeys = [];
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        thirtyDayKeys.push(getDateKey(d));
+      }
+      const all30Days10Hours = thirtyDayKeys.every(
+        (key) => (history[key] || 0) >= 600,
+      );
+      if (all30Days10Hours) {
+        badgeData.day1_30day_completed = true;
+      }
+    }
+
+    // ===== DAY 1 - 30 DAYS OF 14+ HOURS (One-time) =====
+    if (!badgeData.day1_30day_14hr_completed) {
+      const thirtyDayKeys = [];
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        thirtyDayKeys.push(getDateKey(d));
+      }
+      const all30Days14Hours = thirtyDayKeys.every(
+        (key) => (history[key] || 0) >= 840,
+      );
+      if (all30Days14Hours) {
+        badgeData.day1_30day_14hr_completed = true;
+      }
+    }
+
+    // ===== 3 CONSECUTIVE 16-HOUR DAYS (Repeatable) =====
+    if (todayMinutes >= 960) {
+      // Check if today, yesterday, and day before were all 16+ hours
+      const yesterdayKey = getDateKey(new Date(Date.now() - 86400000));
+      const dayBeforeKey = getDateKey(new Date(Date.now() - 2 * 86400000));
+      if (
+        (history[yesterdayKey] || 0) >= 960 &&
+        (history[dayBeforeKey] || 0) >= 960
+      ) {
+        badgeData.silver_3x16_count = (badgeData.silver_3x16_count || 0) + 1;
+      }
+    }
+
+    chrome.storage.local.set({ badgeData });
   });
 }
 
@@ -596,11 +775,24 @@ function migrateBadgesFromHistory() {
       badgeMonth: null,
     };
 
-    // Skip if already migrated
+    // Initialize all fields
+    if (badgeData.day1_30day_completed === undefined)
+      badgeData.day1_30day_completed = false;
+    if (badgeData.day1_30day_14hr_completed === undefined)
+      badgeData.day1_30day_14hr_completed = false;
+    if (badgeData.thousand_hours_completed === undefined)
+      badgeData.thousand_hours_completed = false;
+    if (badgeData.elon_musk_weekly_completed === undefined)
+      badgeData.elon_musk_weekly_completed = false;
+    if (badgeData.bronze_16hr_count === undefined)
+      badgeData.bronze_16hr_count = 0;
+    if (badgeData.six_hour_flow_count === undefined)
+      badgeData.six_hour_flow_count = 0;
+    if (badgeData.silver_3x16_count === undefined)
+      badgeData.silver_3x16_count = 0;
     if (badgeData.migrated) return;
 
     let awardedDays = 0;
-    // Keep track of which dates have already been awarded (from lastBadgeDate)
     const awardedDates = new Set();
     if (badgeData.lastBadgeDate) awardedDates.add(badgeData.lastBadgeDate);
 
@@ -610,7 +802,6 @@ function migrateBadgesFromHistory() {
         awardedDays++;
         awardedDates.add(dateKey);
 
-        // Update monthly count for that month
         const d = new Date(dateKey + "T06:00:00");
         if (!isNaN(d.getTime())) {
           const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -626,13 +817,109 @@ function migrateBadgesFromHistory() {
 
     if (awardedDays > 0) {
       badgeData.lifetime = (badgeData.lifetime || 0) + awardedDays;
-      // Set lastBadgeDate to today's key if today qualifies
       const todayKey = getDateKey(new Date());
       if (history[todayKey] >= 960 && !awardedDates.has(todayKey)) {
         badgeData.lastBadgeDate = todayKey;
       }
     }
 
+    // Calculate bronze_16hr_count from history
+    let bronzeCount = 0;
+    for (const [dateKey, mins] of Object.entries(history)) {
+      if (mins >= 960) bronzeCount++;
+    }
+    // Don't count today twice if already counted
+    const todayKey = getDateKey(new Date());
+    const todayMinutes = history[todayKey] || 0;
+    if (todayMinutes >= 960) {
+      bronzeCount = Math.max(bronzeCount, badgeData.bronze_16hr_count || 0);
+    }
+
+    // Check for 3 consecutive 16-hour days from history
+    let silverCount = 0;
+    const nowDate = new Date();
+    for (let i = 2; i < 31; i++) {
+      for (let j = i; j < i + 3; j++) {
+        const d = new Date(nowDate);
+        d.setDate(d.getDate() - j);
+        const key = getDateKey(d);
+        if ((history[key] || 0) < 960) break;
+        if (j === i + 2) silverCount++;
+      }
+    }
+    badgeData.silver_3x16_count = Math.max(
+      badgeData.silver_3x16_count || 0,
+      silverCount,
+    );
+
+    // Check for thousand hours
+    let totalLifetimeHours = 0;
+    for (const [dateKey, mins] of Object.entries(history)) {
+      totalLifetimeHours += mins / 60;
+    }
+    if (totalLifetimeHours >= 1000) {
+      badgeData.thousand_hours_completed = true;
+    }
+
+    // Check for 30 consecutive days of 10+ hours
+    const sortedKeys = Object.keys(history).sort().reverse();
+    if (sortedKeys.length >= 30) {
+      let consecutive10HourCount = 0;
+      for (let i = 0; i < sortedKeys.length; i++) {
+        const key = sortedKeys[i];
+        const mins = history[key];
+        const expectedDate = new Date();
+        expectedDate.setDate(expectedDate.getDate() - i);
+        const expectedKey = getDateKey(expectedDate);
+        if (key === expectedKey && mins >= 600) {
+          consecutive10HourCount++;
+          if (consecutive10HourCount >= 30) {
+            badgeData.day1_30day_completed = true;
+            break;
+          }
+        } else {
+          consecutive10HourCount = 0;
+        }
+      }
+    }
+
+    // Check for 30 consecutive days of 14+ hours
+    if (!badgeData.day1_30day_14hr_completed) {
+      let consecutive14HourCount = 0;
+      for (let i = 0; i < sortedKeys.length; i++) {
+        const key = sortedKeys[i];
+        const mins = history[key];
+        const expectedDate = new Date();
+        expectedDate.setDate(expectedDate.getDate() - i);
+        const expectedKey = getDateKey(expectedDate);
+        if (key === expectedKey && mins >= 840) {
+          consecutive14HourCount++;
+          if (consecutive14HourCount >= 30) {
+            badgeData.day1_30day_14hr_completed = true;
+            break;
+          }
+        } else {
+          consecutive14HourCount = 0;
+        }
+      }
+    }
+
+    // Check for weekly 100+ hours
+    for (let weekStart = 0; weekStart < sortedKeys.length - 6; weekStart += 7) {
+      let weekTotal = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(nowDate);
+        d.setDate(d.getDate() - weekStart - i);
+        const key = getDateKey(d);
+        weekTotal += history[key] || 0;
+      }
+      if (weekTotal >= 6000) {
+        badgeData.elon_musk_weekly_completed = true;
+        break;
+      }
+    }
+
+    badgeData.bronze_16hr_count = bronzeCount;
     badgeData.migrated = true;
     chrome.storage.local.set({ badgeData });
   });
@@ -1676,19 +1963,140 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // ===== BADGE MESSAGES =====
   else if (message.type === "GET_BADGE_DATA") {
-    migrateBadgesFromHistory();
-    chrome.storage.local.get(["badgeData"], (res) => {
-      // Re-fetch after migration might have updated data
-      chrome.storage.local.get(["badgeData"], (res2) => {
-        sendResponse({
-          badgeData: res2.badgeData || {
-            monthly: 0,
-            lifetime: 0,
-            lastBadgeDate: null,
-            badgeMonth: null,
-          },
-        });
-      });
+    // Get existing badge data and initialize missing fields
+    chrome.storage.local.get(["badgeData", "workHistory"], (res) => {
+      const existingData = res.badgeData || {};
+      const history = res.workHistory || {};
+
+      // Build badgeData with all required fields initialized
+      let badgeData = {
+        monthly: existingData.monthly || 0,
+        lifetime: existingData.lifetime || 0,
+        lastBadgeDate: existingData.lastBadgeDate || null,
+        badgeMonth: existingData.badgeMonth || null,
+        // New achievement fields - initialize from existing or defaults
+        day1_30day_completed: existingData.day1_30day_completed || false,
+        day1_30day_14hr_completed:
+          existingData.day1_30day_14hr_completed || false,
+        thousand_hours_completed:
+          existingData.thousand_hours_completed || false,
+        elon_musk_weekly_completed:
+          existingData.elon_musk_weekly_completed || false,
+        bronze_16hr_count: existingData.bronze_16hr_count || 0,
+        six_hour_flow_count: existingData.six_hour_flow_count || 0,
+        silver_3x16_count: existingData.silver_3x16_count || 0,
+      };
+
+      // Scan history for bronze_16hr_count if not migrated
+      if (!existingData.bronze_16hr_count && !existingData.migrated) {
+        let bronzeCount = 0;
+        for (const mins of Object.values(history)) {
+          if (mins >= 960) bronzeCount++;
+        }
+        badgeData.bronze_16hr_count = bronzeCount;
+        badgeData.migrated = true;
+        chrome.storage.local.set({ badgeData }).catch(() => {});
+      }
+
+      // Check for thousand hours if not already completed
+      if (!badgeData.thousand_hours_completed) {
+        let totalLifetimeHours = 0;
+        for (const mins of Object.values(history)) {
+          totalLifetimeHours += mins / 60;
+        }
+        if (totalLifetimeHours >= 1000) {
+          badgeData.thousand_hours_completed = true;
+        }
+      }
+
+      // Check for 30 consecutive days of 10+ hours
+      if (!badgeData.day1_30day_completed) {
+        const sortedKeys = Object.keys(history).sort().reverse();
+        if (sortedKeys.length >= 30) {
+          let consecutive10HourCount = 0;
+          for (let i = 0; i < sortedKeys.length; i++) {
+            const key = sortedKeys[i];
+            const mins = history[key];
+            const expectedDate = new Date();
+            expectedDate.setDate(expectedDate.getDate() - i);
+            const expectedKey = getDateKey(expectedDate);
+            if (key === expectedKey && mins >= 600) {
+              consecutive10HourCount++;
+              if (consecutive10HourCount >= 30) {
+                badgeData.day1_30day_completed = true;
+                break;
+              }
+            } else {
+              consecutive10HourCount = 0;
+            }
+          }
+        }
+      }
+
+      // Check for 30 consecutive days of 14+ hours
+      if (!badgeData.day1_30day_14hr_completed) {
+        const sortedKeys = Object.keys(history).sort().reverse();
+        if (sortedKeys.length >= 30) {
+          let consecutive14HourCount = 0;
+          for (let i = 0; i < sortedKeys.length; i++) {
+            const key = sortedKeys[i];
+            const mins = history[key];
+            const expectedDate = new Date();
+            expectedDate.setDate(expectedDate.getDate() - i);
+            const expectedKey = getDateKey(expectedDate);
+            if (key === expectedKey && mins >= 840) {
+              consecutive14HourCount++;
+              if (consecutive14HourCount >= 30) {
+                badgeData.day1_30day_14hr_completed = true;
+                break;
+              }
+            } else {
+              consecutive14HourCount = 0;
+            }
+          }
+        }
+      }
+
+      // Check for 3 consecutive 16-hour days
+      if (!badgeData.silver_3x16_count) {
+        const nowDate = new Date();
+        let silverCount = 0;
+        for (let i = 2; i < 31; i++) {
+          for (let j = i; j < i + 3; j++) {
+            const d = new Date(nowDate);
+            d.setDate(d.getDate() - j);
+            const key = getDateKey(d);
+            if ((history[key] || 0) < 960) break;
+            if (j === i + 2) silverCount++;
+          }
+        }
+        badgeData.silver_3x16_count = silverCount;
+      }
+
+      // Check for weekly 100+ hours
+      if (!badgeData.elon_musk_weekly_completed) {
+        const nowDate = new Date();
+        const sortedKeys = Object.keys(history).sort().reverse();
+        for (
+          let weekStart = 0;
+          weekStart < sortedKeys.length - 6;
+          weekStart += 7
+        ) {
+          let weekTotal = 0;
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(nowDate);
+            d.setDate(d.getDate() - weekStart - i);
+            const key = getDateKey(d);
+            weekTotal += history[key] || 0;
+          }
+          if (weekTotal >= 6000) {
+            badgeData.elon_musk_weekly_completed = true;
+            break;
+          }
+        }
+      }
+
+      sendResponse({ badgeData: badgeData });
     });
     return true;
   }
