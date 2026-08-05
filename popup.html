@@ -1126,6 +1126,96 @@
           </div>
         </div>
 
+        <!-- ===== DATA MANAGEMENT SECTION ===== -->
+        <div id="dataManagementSection" style="display: none">
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+          <strong
+            style="
+              font-size: 14px;
+              color: #5c6bc0;
+              display: block;
+              margin-bottom: 4px;
+            "
+            >📦 Data Management</strong
+          >
+          <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+            Export your progress and data to keep safe, or import after
+            switching browsers/computers.
+          </div>
+
+          <div style="display: flex; gap: 8px; margin-bottom: 8px">
+            <button
+              id="exportDataBtn"
+              style="
+                flex: 1;
+                padding: 10px;
+                background: #5c6bc0;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+              "
+            >
+              Export Data
+            </button>
+            <button
+              id="importDataBtn"
+              style="
+                flex: 1;
+                padding: 10px;
+                background: var(--primary-red);
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+              "
+            >
+              Import Data
+            </button>
+          </div>
+
+          <input
+            type="file"
+            id="importFileInput"
+            accept=".json,application/json"
+            style="display: none"
+          />
+
+          <button
+            id="clearDataBtn"
+            style="
+              width: 100%;
+              padding: 8px;
+              background: #e74c3c;
+              color: white;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 12px;
+              font-weight: 500;
+            "
+          >
+            Clear All Data (Reset)
+          </button>
+
+          <div
+            id="dataStatusMsg"
+            style="
+              display: none;
+              margin-top: 8px;
+              font-size: 12px;
+              padding: 8px;
+              border-radius: 4px;
+            "
+          ></div>
+        </div>
+
         <!-- Schedule section (hidden by default) -->
         <div id="dashboardSchedule" style="display: none">
           <div

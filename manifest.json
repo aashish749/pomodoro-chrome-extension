@@ -33,7 +33,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["analytics.html"],
+      "resources": ["analytics.html", "audio.html"],
       "matches": ["<all_urls>"]
     },
     {
@@ -46,7 +46,9 @@
         "badges/complete 6 hours without single pause.png",
         "badges/godlmedal_for_1000hours.png",
         "badges/musk_badge_for_100hours_plus_perweek.png",
-        "badges/silverfor_3consecutive_16hours_days.png"
+        "badges/silverfor_3consecutive_16hours_days.png",
+        "timeisabout_to_up.mp3",
+        "completed.mp3"
       ],
       "matches": ["<all_urls>"]
     }

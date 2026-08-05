@@ -484,6 +484,12 @@ function renderLineChart(data, days) {
 
   if (lineChart) lineChart.destroy();
 
+  // Create gradient fill: green for higher values, red for lower values
+  const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+  gradient.addColorStop(0, "rgba(39,174,96,0.3)"); // Green at top (higher values)
+  gradient.addColorStop(0.5, "rgba(255,200,0,0.2)"); // Yellow in middle
+  gradient.addColorStop(1, "rgba(232,67,247,0.1)"); // Pinkish-red at bottom (lower values)
+
   lineChart = new Chart(ctx, {
     type: "line",
     data: {
@@ -492,13 +498,22 @@ function renderLineChart(data, days) {
         {
           label: "Hours worked",
           data: values,
-          borderColor: "#b81d18",
-          backgroundColor: "rgba(184,29,24,0.1)",
+          borderColor: "#2ecc71",
+          backgroundColor: gradient,
           fill: true,
           tension: 0.3,
-          pointRadius: 3,
-          pointBackgroundColor: "#b81d18",
+          pointRadius: 4,
+          pointBackgroundColor: "#2ecc71",
           borderWidth: 2,
+          // Add hour labels to data points
+          datalabels: {
+            display: true,
+            align: "top",
+            offset: 4,
+            font: { size: 9 },
+            color: "#555",
+            formatter: (value) => (value ? `${value}h` : ""),
+          },
         },
       ],
     },
@@ -511,6 +526,9 @@ function renderLineChart(data, days) {
           callbacks: {
             label: (ctx) => `${ctx.raw}h`,
           },
+        },
+        datalabels: {
+          display: false, // Hide by default, can be enabled if needed
         },
       },
       scales: {
@@ -541,6 +559,10 @@ function renderCompareChart(data) {
 
   if (compareChart) compareChart.destroy();
 
+  // Reorder data to 6AM-first order for consistent display
+  const thisWeekReordered = reorderHours(data.thisWeekAvg);
+  const lastWeekReordered = reorderHours(data.lastWeekAvg);
+
   // Fetch best data for comparison modes
   chrome.runtime.sendMessage({ type: "GET_BEST_DATA" }, (bestRes) => {
     const bestData = (bestRes && bestRes.bestData) || {};
@@ -551,13 +573,13 @@ function renderCompareChart(data) {
       datasets = [
         {
           label: "This week (avg min)",
-          data: data.thisWeekAvg,
+          data: thisWeekReordered,
           backgroundColor: "rgba(184,29,24,0.8)",
           borderRadius: 3,
         },
         {
           label: "Last week (avg min)",
-          data: data.lastWeekAvg,
+          data: lastWeekReordered,
           backgroundColor: "rgba(230,126,34,0.6)",
           borderRadius: 3,
         },
@@ -600,6 +622,10 @@ function renderCompareChart(data) {
           lastMonthCount[h] > 0 ? Math.round(t / lastMonthCount[h]) : 0,
         );
 
+        // Reorder to 6AM-first order
+        const thisMonthReordered = reorderHours(thisMonthAvg);
+        const lastMonthReordered = reorderHours(lastMonthAvg);
+
         if (compareChart) compareChart.destroy();
         compareChart = new Chart(ctx, {
           type: "bar",
@@ -608,13 +634,13 @@ function renderCompareChart(data) {
             datasets: [
               {
                 label: "This month (avg min)",
-                data: thisMonthAvg,
+                data: thisMonthReordered,
                 backgroundColor: "rgba(184,29,24,0.8)",
                 borderRadius: 3,
               },
               {
                 label: "Last month (avg min)",
-                data: lastMonthAvg,
+                data: lastMonthReordered,
                 backgroundColor: "rgba(230,126,34,0.6)",
                 borderRadius: 3,
               },
@@ -627,16 +653,17 @@ function renderCompareChart(data) {
       return;
     } else if (currentCompareMode === "best-week") {
       const bestWeek = bestData.bestWeekHourly || new Array(24).fill(0);
+      const bestWeekReordered = reorderHours(bestWeek);
       datasets = [
         {
           label: "This week (avg min)",
-          data: data.thisWeekAvg,
+          data: thisWeekReordered,
           backgroundColor: "rgba(184,29,24,0.8)",
           borderRadius: 3,
         },
         {
           label: `Best week (${bestData.bestWeekLabel || "N/A"})`,
-          data: bestWeek,
+          data: bestWeekReordered,
           backgroundColor: "rgba(39,174,96,0.6)",
           borderRadius: 3,
         },
@@ -645,16 +672,17 @@ function renderCompareChart(data) {
         subtitle.textContent = `Best week: ${bestData.bestWeekLabel || "N/A"} (${Math.round((bestData.bestWeekTotal || 0) / 60)}h total)`;
     } else if (currentCompareMode === "best-month") {
       const bestMonth = bestData.bestMonthHourly || new Array(24).fill(0);
+      const bestMonthReordered = reorderHours(bestMonth);
       datasets = [
         {
           label: "This month (avg min)",
-          data: data.thisWeekAvg,
+          data: thisWeekReordered,
           backgroundColor: "rgba(184,29,24,0.8)",
           borderRadius: 3,
         },
         {
           label: `Best month (${bestData.bestMonthLabel || "N/A"})`,
-          data: bestMonth,
+          data: bestMonthReordered,
           backgroundColor: "rgba(39,174,96,0.6)",
           borderRadius: 3,
         },

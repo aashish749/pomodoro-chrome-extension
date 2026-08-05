@@ -16,6 +16,13 @@ let pauseDurationSecs = 0; // How long the user set for the pause timer
 let resumeTimerEndTime = 0; // When the resume timer expires
 let resumeOvertimeSeconds = 0; // How long past the resume timer they've gone
 
+// Audio for resume timer warning (plays via offscreen document in MV3 service worker)
+let resumeAudioPlayed = false; // Track if the warning audio has been played
+
+// Offscreen document ready promise
+let offscreenDocReadyPromise = null;
+let offscreenDocReadyResolve = null;
+
 // Initialize badge formatting
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -35,6 +42,66 @@ function initializePauseSettings() {
     }
   });
 }
+
+// ===== OFFFSCREEN DOCUMENT MANAGEMENT =====
+
+// Ensures the offscreen document (audio.html) is created so we can play audio
+async function ensureOffscreenDocument() {
+  if (offscreenDocReadyPromise) return offscreenDocReadyPromise;
+
+  offscreenDocReadyPromise = new Promise((resolve) => {
+    offscreenDocReadyResolve = resolve;
+  });
+
+  try {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL("audio.html"),
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "Play notification sounds for timer events",
+    });
+  } catch (e) {
+    // If it already exists, that's fine — resolve immediately
+    if (e.message && e.message.includes("already exists")) {
+      offscreenDocReadyResolve();
+    } else {
+      console.error("Failed to create offscreen document:", e);
+      offscreenDocReadyResolve(); // Resolve anyway to not block forever
+    }
+  }
+}
+
+// Listen for the offscreen document ready signal
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "OFFSCREEN_READY") {
+    if (offscreenDocReadyResolve) {
+      offscreenDocReadyResolve();
+      offscreenDocReadyResolve = null;
+    }
+  }
+});
+
+// Play the resume timer warning via the offscreen document
+async function playResumeTimerWarning() {
+  await ensureOffscreenDocument();
+  // Wait a tick for the document to be ready
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await chrome.runtime.sendMessage({
+      type: "PLAY_SOUND",
+      soundFile: chrome.runtime.getURL("timeisabout_to_up.mp3"),
+    });
+  } catch (e) {
+    console.error("Failed to send play sound message:", e);
+  }
+}
+
+// Stop the resume timer warning audio and reset the play flag
+function stopResumeTimerAudio() {
+  resumeAudioPlayed = false;
+  chrome.runtime.sendMessage({ type: "STOP_SOUND" }).catch(() => {});
+}
+
+// ===== END OFFFSCREEN DOCUMENT MANAGEMENT =====
 
 // Returns date key with 6-hour offset (so sessions up to 6AM count toward previous day)
 function getDateKey(date) {
@@ -268,6 +335,12 @@ function startResumeTimerEngine() {
           const mainTimeLeft = Math.round(pauseTimeLeft / 1000);
           updateBadgeText(mainTimeLeft);
           if (remaining % 5 === 0) saveStateToStorage();
+
+          // Play warning audio when resume timer hits 10 seconds remaining
+          if (remaining <= 10 && !resumeAudioPlayed) {
+            resumeAudioPlayed = true;
+            playResumeTimerWarning();
+          }
         } else {
           // Resume timer expired! Switch to PAUSED_OVERTIME
           currentState = "PAUSED_OVERTIME";
@@ -293,33 +366,26 @@ function startResumeTimerEngine() {
 
 function applyPauseDeduction() {
   const todayKey = getDateKey(new Date());
-  chrome.storage.local.get(["workHistory", "pauseDeductionDays"], (res) => {
-    const deductionDays = res.pauseDeductionDays || {};
-    // Can only deduct once per day
-    if (deductionDays[todayKey]) return;
+  const lateSeconds = Math.round((Date.now() - resumeTimerEndTime) / 1000);
 
-    let deductionMinutes = 0;
-    if (totalDurationMins >= 180) {
-      deductionMinutes = 60; // 1 hour for sessions >= 3 hours
-    } else if (totalDurationMins >= 60) {
-      deductionMinutes = 30; // 30 minutes for sessions >= 1 hour
-    }
+  if (lateSeconds <= 0) return;
 
-    if (deductionMinutes > 0) {
+  // Deduct only the actual late time, capped at 10 minutes maximum
+  const lateMinutes = Math.round(lateSeconds / 60);
+  const deductionMinutes = Math.min(lateMinutes, 10);
+
+  if (deductionMinutes > 0) {
+    chrome.storage.local.get(["workHistory"], (res) => {
       const history = res.workHistory || {};
       history[todayKey] = Math.max(
         0,
         (history[todayKey] || 0) - deductionMinutes,
       );
-      deductionDays[todayKey] = true;
-      chrome.storage.local.set(
-        { workHistory: history, pauseDeductionDays: deductionDays },
-        () => {
-          updateStreakData();
-        },
-      );
-    }
-  });
+      chrome.storage.local.set({ workHistory: history }, () => {
+        updateStreakData();
+      });
+    });
+  }
 }
 
 function handleSessionCompletion() {
@@ -1333,6 +1399,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
+    resumeAudioPlayed = false;
 
     endTime = Date.now() + remainingTime * 1000;
 
@@ -1380,6 +1447,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
+      stopResumeTimerAudio();
       clearIntervalEngine();
       startTimerEngine();
       saveStateToStorage();
@@ -1475,6 +1543,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
+      resumeAudioPlayed = false;
 
       chrome.action.setBadgeText({ text: "" });
       chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -1497,6 +1566,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
+    resumeAudioPlayed = false;
 
     chrome.action.setBadgeText({ text: "" });
     chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -1556,21 +1626,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       sendResponse({
         state: currentState,
-        remainingTime: remainingTime,
-        totalDurationMins: totalDurationMins,
+        remainingTime,
+        totalDurationMins,
         isBreak: isBreakSession,
-        overtimeSeconds: overtimeSeconds,
-        pauseCount: pauseCount,
-        pauseDurationSecs: pauseDurationSecs,
-        resumeTimerRemaining: resumeTimerRemaining,
-        resumeTimerOvertime: resumeTimerOvertime,
+        overtimeSeconds,
+        pauseCount,
+        pauseDurationSecs,
+        resumeTimerRemaining,
+        resumeTimerOvertime,
       });
     });
     return true;
-  }
-
-  // ===== PAUSE SETTINGS MESSAGES =====
-  else if (message.type === "GET_PAUSE_SETTINGS") {
+  } else if (message.type === "GET_STREAK_DATA") {
+    ensureStreakData((streakData) => {
+      const todayKey = getDateKey(new Date());
+      chrome.storage.local.get(["workHistory"], (store) => {
+        const todayMinutes = store.workHistory?.[todayKey] || 0;
+        const canRecover =
+          streakData.streakSavers > 0 && streakData.brokenStreakDate !== null;
+        sendResponse({ streakData, todayMinutes, canRecover });
+      });
+    });
+    return true;
+  } else if (message.type === "GET_BADGE_DATA") {
+    chrome.storage.local.get(["badgeData"], (res) => {
+      sendResponse({ badgeData: res.badgeData || {} });
+    });
+    return true;
+  } else if (message.type === "RECOVER_STREAK") {
+    ensureStreakData((streakData) => {
+      if (streakData.streakSavers <= 0) {
+        sendResponse({ success: false, reason: "No streak savers available" });
+        return;
+      }
+      if (!streakData.brokenStreakDate) {
+        sendResponse({ success: false, reason: "No broken streak to recover" });
+        return;
+      }
+      streakData.streakSavers--;
+      streakData.brokenStreakDate = null;
+      // Restore the streak by setting lastStreakDate to yesterday
+      const yesterdayKey = getYesterdayKey();
+      streakData.lastStreakDate = yesterdayKey;
+      streakData.currentStreak++;
+      chrome.storage.local.set({ streakData }, () => {
+        sendResponse({ success: true });
+      });
+    });
+    return true;
+  } else if (message.type === "GET_BLOCKED_PATTERNS") {
+    chrome.storage.local.get(["blockedPatterns"], (res) => {
+      sendResponse({ patterns: res.blockedPatterns || [] });
+    });
+    return true;
+  } else if (message.type === "SAVE_BLOCKED_PATTERNS") {
+    chrome.storage.local.set({ blockedPatterns: message.patterns }, () => {
+      updateBlockingRules();
+      sendResponse({ success: true });
+    });
+    return true;
+  } else if (message.type === "GET_YOUTUBE_CHANNELS") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], (res) => {
+      sendResponse({ channels: res.youtubeBlockedChannels || {} });
+    });
+    return true;
+  } else if (message.type === "SAVE_YOUTUBE_CHANNELS") {
+    chrome.storage.local.set(
+      { youtubeBlockedChannels: message.channels },
+      () => {
+        sendResponse({ success: true });
+      },
+    );
+    return true;
+  } else if (message.type === "GET_BLOCKED_KEYWORDS") {
+    chrome.storage.local.get(["blockedKeywords"], (res) => {
+      sendResponse({ keywords: res.blockedKeywords || [] });
+    });
+    return true;
+  } else if (message.type === "SAVE_BLOCKED_KEYWORDS") {
+    chrome.storage.local.set({ blockedKeywords: message.keywords }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  } else if (message.type === "GET_PAUSE_SETTINGS") {
     chrome.storage.local.get(["pauseSettings"], (res) => {
       sendResponse({
         settings: res.pauseSettings || {
@@ -1585,529 +1723,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
     });
     return true;
-  }
-
-  // ===== STREAK MESSAGES =====
-  else if (message.type === "GET_STREAK_DATA") {
-    // Wait for streak data to be updated before responding
-    // This ensures we return fresh data, not stale cached values
-    updateStreakData(() => {
-      chrome.storage.local.get(["streakData", "workHistory"], (res) => {
-        const streakData = res.streakData || {
-          currentStreak: 0,
-          longestStreak: 0,
-          streakSavers: 0,
-          lastStreakDate: null,
-          progressToNextSaver: 0,
-          brokenStreakDate: null,
-        };
-        const history = res.workHistory || {};
-        const todayKey = getDateKey(new Date());
-        const yesterdayKey = getYesterdayKey();
-        const todayMinutes = history[todayKey] || 0;
-
-        let canRecover = false;
-        if (streakData.brokenStreakDate && streakData.streakSavers > 0) {
-          const brokenDate = new Date(streakData.brokenStreakDate);
-          const todayDate = new Date(todayKey);
-          const diffDays = Math.round((todayDate - brokenDate) / 86400000);
-          if (diffDays === 1) {
-            canRecover = true;
-          }
-        }
-
-        sendResponse({
-          streakData,
-          todayMinutes,
-          canRecover,
-        });
-      });
-    });
-    return true;
-  } else if (message.type === "RECOVER_STREAK") {
-    chrome.storage.local.get(["streakData", "workHistory"], (res) => {
-      const streakData = res.streakData || {
-        currentStreak: 0,
-        longestStreak: 0,
-        streakSavers: 0,
-        lastStreakDate: null,
-        progressToNextSaver: 0,
-        brokenStreakDate: null,
-      };
-      const history = res.workHistory || {};
-      const todayKey = getDateKey(new Date());
-      const yesterdayKey = getYesterdayKey();
-
-      if (!streakData.brokenStreakDate || streakData.streakSavers <= 0) {
-        sendResponse({
-          success: false,
-          reason: "Cannot recover streak at this time.",
-        });
-        return;
-      }
-
-      const brokenDate = new Date(streakData.brokenStreakDate);
-      const todayDate = new Date(todayKey);
-      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
-      if (diffDays !== 1) {
-        sendResponse({
-          success: false,
-          reason: "Recovery window has expired.",
-        });
-        return;
-      }
-
-      streakData.streakSavers -= 1;
-      streakData.lastStreakDate = yesterdayKey;
-      streakData.brokenStreakDate = null;
-
-      if (streakData.currentStreak > streakData.longestStreak) {
-        streakData.longestStreak = streakData.currentStreak;
-      }
-
-      chrome.storage.local.set({ streakData }, () => {
-        sendResponse({ success: true, streakData });
-      });
-    });
-    return true;
-  }
-
-  // Blocking related messages
-  else if (message.type === "GET_BLOCKED_PATTERNS") {
-    chrome.storage.local.get(["blockedPatterns"], (res) => {
-      sendResponse({ patterns: res.blockedPatterns || [] });
-    });
-    return true;
-  } else if (message.type === "ADD_BLOCKED_PATTERN") {
-    chrome.storage.local.get(["blockedPatterns"], async (res) => {
-      const patterns = res.blockedPatterns || [];
-      const exists = patterns.some(
-        (p) => (typeof p === "string" ? p : p.pattern) === message.pattern,
-      );
-      if (!exists) {
-        patterns.push({ pattern: message.pattern, deleteClicks: 0 });
-        await chrome.storage.local.set({ blockedPatterns: patterns });
-        await updateBlockingRules();
-      }
-      sendResponse({ success: true, patterns });
-    });
-    return true;
-  } else if (message.type === "INCREMENT_DELETE_CLICK") {
-    chrome.storage.local.get(["blockedPatterns"], async (res) => {
-      let patterns = res.blockedPatterns || [];
-      let found = false;
-      for (let i = 0; i < patterns.length; i++) {
-        const p =
-          typeof patterns[i] === "string" ? patterns[i] : patterns[i].pattern;
-        if (p === message.pattern) {
-          if (typeof patterns[i] === "string") {
-            patterns[i] = { pattern: patterns[i], deleteClicks: 1 };
-          } else {
-            patterns[i].deleteClicks = (patterns[i].deleteClicks || 0) + 1;
-          }
-          found = true;
-          break;
-        }
-      }
-      if (found) {
-        await chrome.storage.local.set({ blockedPatterns: patterns });
-        sendResponse({
-          success: true,
-          deleteClicks:
-            patterns.find(
-              (p) =>
-                (typeof p === "string" ? p : p.pattern) === message.pattern,
-            )?.deleteClicks || 0,
-        });
-      } else {
-        sendResponse({ success: false });
-      }
-    });
-    return true;
-  } else if (message.type === "REMOVE_BLOCKED_PATTERN") {
-    chrome.storage.local.get(["blockedPatterns"], async (res) => {
-      let patterns = res.blockedPatterns || [];
-      const target = patterns.find(
-        (p) => (typeof p === "string" ? p : p.pattern) === message.pattern,
-      );
-      if (target && (target.deleteClicks || 0) >= 200) {
-        patterns = patterns.filter(
-          (p) => (typeof p === "string" ? p : p.pattern) !== message.pattern,
-        );
-        await chrome.storage.local.set({ blockedPatterns: patterns });
-        await updateBlockingRules();
-        sendResponse({ success: true, patterns });
-      } else {
-        sendResponse({ success: false, clicks: target?.deleteClicks || 0 });
-      }
-    });
-    return true;
-  } else if (message.type === "GET_YOUTUBE_CHANNELS") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], (res) => {
-      sendResponse({ channels: res.youtubeBlockedChannels || {} });
-    });
-    return true;
-  } else if (message.type === "ADD_YOUTUBE_CHANNEL") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
-      const channels = res.youtubeBlockedChannels || {};
-      channels[message.channelKey] = {
-        maxMinutes: message.maxMinutes || null,
-        usedMinutes: 0,
-        lastReset: getTodayStr(),
-        bonusUsed: false,
-        deleteClicks: 0,
-      };
-      await chrome.storage.local.set({ youtubeBlockedChannels: channels });
-      sendResponse({ success: true, channels });
-    });
-    return true;
-  } else if (message.type === "INCREMENT_YOUTUBE_DELETE_CLICK") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
-      const channels = res.youtubeBlockedChannels || {};
-      const data = channels[message.channelKey];
-      if (data) {
-        data.deleteClicks = (data.deleteClicks || 0) + 1;
-        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
-        sendResponse({ success: true, deleteClicks: data.deleteClicks });
-      } else {
-        sendResponse({ success: false });
-      }
-    });
-    return true;
-  } else if (message.type === "REMOVE_YOUTUBE_CHANNEL") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
-      const channels = res.youtubeBlockedChannels || {};
-      const data = channels[message.channelKey];
-      if (data && (data.deleteClicks || 0) >= 200) {
-        delete channels[message.channelKey];
-        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
-        sendResponse({ success: true, channels });
-      } else {
-        sendResponse({ success: false, clicks: data?.deleteClicks || 0 });
-      }
-    });
-    return true;
-  } else if (message.type === "ADD_5_MINUTES_BONUS") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
-      const channels = res.youtubeBlockedChannels || {};
-      const data = channels[message.channelKey];
-      if (data && !data.bonusUsed) {
-        data.maxMinutes = (data.maxMinutes || 0) + 5;
-        data.bonusUsed = true;
-        data.lastReset = getTodayStr();
-        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
-        sendResponse({ success: true, newMax: data.maxMinutes });
-      } else {
-        sendResponse({
-          success: false,
-          reason:
-            data && data.bonusUsed
-              ? "Bonus already used today"
-              : "Channel not found",
-        });
-      }
-    });
-    return true;
-  } else if (message.type === "CHECK_VIDEO_CHANNEL") {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (!tabId) {
-      sendResponse({ blocked: false });
-      return true;
-    }
-
-    const checkStr = (message.channelHandle || message.channelName || "")
-      .toLowerCase()
-      .replace(/^@/, "");
-
+  } else if (
+    message.type === "GET_HOURLY_ANALYTICS" ||
+    message.type === "GET_ANALYTICS"
+  ) {
     chrome.storage.local.get(
-      ["youtubeBlockedChannels", "blockedPatterns"],
+      ["workHistory", "hourlyHistory", "bestData"],
       (res) => {
-        const patterns = res.blockedPatterns || [];
-        if (isBlockedByPattern(message.url, patterns)) {
-          redirectToBlocked(tabId, null);
-          sendResponse({ blocked: true });
-          return;
-        }
-
-        const channels = res.youtubeBlockedChannels || {};
-        let matchedKey = null;
-
-        for (const key of Object.keys(channels)) {
-          const keyLower = key.toLowerCase().replace(/^@/, "");
-          if (
-            checkStr.includes(keyLower) ||
-            keyLower.includes(checkStr) ||
-            message.channelHandle?.toLowerCase().includes(keyLower) ||
-            message.channelName?.toLowerCase().includes(keyLower)
-          ) {
-            matchedKey = key;
-            break;
-          }
-        }
-
-        if (!matchedKey) {
-          sendResponse({ blocked: false });
-          return;
-        }
-
-        const data = channels[matchedKey];
-        if (!data.maxMinutes) {
-          redirectToBlocked(tabId, matchedKey);
-          sendResponse({ blocked: true });
-        } else {
-          if (!youtubeActiveTabs[tabId]) {
-            startYouTubeTimeTracking(tabId, matchedKey);
-          } else {
-            youtubeActiveTabs[tabId].channelKey = matchedKey;
-          }
-          checkChannelBlock(matchedKey, data, tabId);
-          sendResponse({ blocked: false, tracking: true });
-        }
+        sendResponse({
+          workHistory: res.workHistory || {},
+          hourlyHistory: res.hourlyHistory || {},
+          bestData: res.bestData || {},
+        });
       },
     );
     return true;
-  } else if (message.type === "GET_BLOCKED_KEYWORDS") {
-    chrome.storage.local.get(["blockedKeywords"], (res) => {
-      sendResponse({ keywords: res.blockedKeywords || [] });
-    });
+  } else if (message.type === "EXPORT_DATA") {
+    chrome.storage.local.get(
+      [
+        "workHistory",
+        "hourlyHistory",
+        "streakData",
+        "badgeData",
+        "bestData",
+        "daySchedule",
+        "blockedPatterns",
+        "youtubeBlockedChannels",
+        "blockedKeywords",
+        "pauseSettings",
+      ],
+      (res) => {
+        sendResponse({ data: res });
+      },
+    );
     return true;
-  } else if (message.type === "ADD_BLOCKED_KEYWORD") {
-    chrome.storage.local.get(["blockedKeywords"], async (res) => {
-      const keywords = res.blockedKeywords || [];
-      const kw = message.keyword.toLowerCase().trim();
-      const exists = keywords.some(
-        (k) => (typeof k === "string" ? k : k.keyword) === kw,
-      );
-      if (!exists) {
-        keywords.push({ keyword: kw, deleteClicks: 0 });
-        await chrome.storage.local.set({ blockedKeywords: keywords });
-      }
-      sendResponse({ success: true, keywords });
-    });
-    return true;
-  } else if (message.type === "INCREMENT_KEYWORD_DELETE_CLICK") {
-    chrome.storage.local.get(["blockedKeywords"], async (res) => {
-      const keywords = res.blockedKeywords || [];
-      for (let i = 0; i < keywords.length; i++) {
-        const kw =
-          typeof keywords[i] === "string" ? keywords[i] : keywords[i].keyword;
-        if (kw === message.keyword) {
-          if (typeof keywords[i] === "string") {
-            keywords[i] = { keyword: keywords[i], deleteClicks: 1 };
-          } else {
-            keywords[i].deleteClicks = (keywords[i].deleteClicks || 0) + 1;
-          }
-          break;
-        }
-      }
-      await chrome.storage.local.set({ blockedKeywords: keywords });
+  } else if (message.type === "IMPORT_DATA") {
+    chrome.storage.local.set(message.data, () => {
       sendResponse({ success: true });
     });
     return true;
-  } else if (message.type === "REMOVE_BLOCKED_KEYWORD") {
-    chrome.storage.local.get(["blockedKeywords"], async (res) => {
-      let keywords = res.blockedKeywords || [];
-      const target = keywords.find(
-        (k) => (typeof k === "string" ? k : k.keyword) === message.keyword,
-      );
-      if (target && (target.deleteClicks || 0) >= 200) {
-        keywords = keywords.filter(
-          (k) => (typeof k === "string" ? k : k.keyword) !== message.keyword,
-        );
-        await chrome.storage.local.set({ blockedKeywords: keywords });
-        sendResponse({ success: true, keywords });
-      } else {
-        sendResponse({ success: false, clicks: target?.deleteClicks || 0 });
-      }
-    });
-    return true;
-  } else if (message.type === "CHECK_VIDEO_KEYWORDS") {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (!tabId) {
-      sendResponse({ blocked: false });
-      return true;
-    }
-
-    chrome.storage.local.get(["blockedKeywords"], (res) => {
-      const keywords = res.blockedKeywords || [];
-      const keywordStrs = keywords.map((k) =>
-        (typeof k === "string" ? k : k.keyword).toLowerCase(),
-      );
-      const text = (message.text || "").toLowerCase();
-      const matchedKeyword = keywordStrs.find((kw) => text.includes(kw));
-
-      if (matchedKeyword) {
-        const params = `?keyword=${encodeURIComponent(matchedKeyword)}`;
-        chrome.tabs.update(tabId, {
-          url: chrome.runtime.getURL(`blocked.html${params}`),
-        });
-        sendResponse({ blocked: true, keyword: matchedKeyword });
-      } else {
-        sendResponse({
-          blocked: false,
-          keywords: keywordStrs,
-        });
-
-        if (message.url && message.url.includes("/results")) {
-          chrome.tabs
-            .sendMessage(tabId, {
-              type: "HIDE_BLOCKED_RESULTS",
-              keywords: keywordStrs,
-            })
-            .catch(() => {});
-        }
-      }
-    });
-    return true;
-  }
-
-  // ===== BADGE MESSAGES =====
-  else if (message.type === "GET_BADGE_DATA") {
-    // Get existing badge data and initialize missing fields
-    chrome.storage.local.get(["badgeData", "workHistory"], (res) => {
-      const existingData = res.badgeData || {};
-      const history = res.workHistory || {};
-
-      // Build badgeData with all required fields initialized
-      let badgeData = {
-        monthly: existingData.monthly || 0,
-        lifetime: existingData.lifetime || 0,
-        lastBadgeDate: existingData.lastBadgeDate || null,
-        badgeMonth: existingData.badgeMonth || null,
-        // New achievement fields - initialize from existing or defaults
-        day1_30day_completed: existingData.day1_30day_completed || false,
-        day1_30day_14hr_completed:
-          existingData.day1_30day_14hr_completed || false,
-        thousand_hours_completed:
-          existingData.thousand_hours_completed || false,
-        elon_musk_weekly_completed:
-          existingData.elon_musk_weekly_completed || false,
-        bronze_16hr_count: existingData.bronze_16hr_count || 0,
-        six_hour_flow_count: existingData.six_hour_flow_count || 0,
-        silver_3x16_count: existingData.silver_3x16_count || 0,
-      };
-
-      // Scan history for bronze_16hr_count if not migrated
-      if (!existingData.bronze_16hr_count && !existingData.migrated) {
-        let bronzeCount = 0;
-        for (const mins of Object.values(history)) {
-          if (mins >= 960) bronzeCount++;
-        }
-        badgeData.bronze_16hr_count = bronzeCount;
-        badgeData.migrated = true;
-        chrome.storage.local.set({ badgeData }).catch(() => {});
-      }
-
-      // Check for thousand hours if not already completed
-      if (!badgeData.thousand_hours_completed) {
-        let totalLifetimeHours = 0;
-        for (const mins of Object.values(history)) {
-          totalLifetimeHours += mins / 60;
-        }
-        if (totalLifetimeHours >= 1000) {
-          badgeData.thousand_hours_completed = true;
-        }
-      }
-
-      // Check for 30 consecutive days of 10+ hours
-      if (!badgeData.day1_30day_completed) {
-        const sortedKeys = Object.keys(history).sort().reverse();
-        if (sortedKeys.length >= 30) {
-          let consecutive10HourCount = 0;
-          for (let i = 0; i < sortedKeys.length; i++) {
-            const key = sortedKeys[i];
-            const mins = history[key];
-            const expectedDate = new Date();
-            expectedDate.setDate(expectedDate.getDate() - i);
-            const expectedKey = getDateKey(expectedDate);
-            if (key === expectedKey && mins >= 600) {
-              consecutive10HourCount++;
-              if (consecutive10HourCount >= 30) {
-                badgeData.day1_30day_completed = true;
-                break;
-              }
-            } else {
-              consecutive10HourCount = 0;
-            }
-          }
-        }
-      }
-
-      // Check for 30 consecutive days of 14+ hours
-      if (!badgeData.day1_30day_14hr_completed) {
-        const sortedKeys = Object.keys(history).sort().reverse();
-        if (sortedKeys.length >= 30) {
-          let consecutive14HourCount = 0;
-          for (let i = 0; i < sortedKeys.length; i++) {
-            const key = sortedKeys[i];
-            const mins = history[key];
-            const expectedDate = new Date();
-            expectedDate.setDate(expectedDate.getDate() - i);
-            const expectedKey = getDateKey(expectedDate);
-            if (key === expectedKey && mins >= 840) {
-              consecutive14HourCount++;
-              if (consecutive14HourCount >= 30) {
-                badgeData.day1_30day_14hr_completed = true;
-                break;
-              }
-            } else {
-              consecutive14HourCount = 0;
-            }
-          }
-        }
-      }
-
-      // Check for 3 consecutive 16-hour days
-      if (!badgeData.silver_3x16_count) {
-        const nowDate = new Date();
-        let silverCount = 0;
-        for (let i = 2; i < 31; i++) {
-          for (let j = i; j < i + 3; j++) {
-            const d = new Date(nowDate);
-            d.setDate(d.getDate() - j);
-            const key = getDateKey(d);
-            if ((history[key] || 0) < 960) break;
-            if (j === i + 2) silverCount++;
-          }
-        }
-        badgeData.silver_3x16_count = silverCount;
-      }
-
-      // Check for weekly 100+ hours
-      if (!badgeData.elon_musk_weekly_completed) {
-        const nowDate = new Date();
-        const sortedKeys = Object.keys(history).sort().reverse();
-        for (
-          let weekStart = 0;
-          weekStart < sortedKeys.length - 6;
-          weekStart += 7
-        ) {
-          let weekTotal = 0;
-          for (let i = 0; i < 7; i++) {
-            const d = new Date(nowDate);
-            d.setDate(d.getDate() - weekStart - i);
-            const key = getDateKey(d);
-            weekTotal += history[key] || 0;
-          }
-          if (weekTotal >= 6000) {
-            badgeData.elon_musk_weekly_completed = true;
-            break;
-          }
-        }
-      }
-
-      sendResponse({ badgeData: badgeData });
-    });
-    return true;
-  }
-
-  // ===== ANALYTICS MESSAGES =====
-  else if (message.type === "GET_HOURLY_ANALYTICS") {
-    chrome.storage.local.get(["hourlyHistory", "workHistory"], (res) => {
-      sendResponse({
-        hourlyHistory: res.hourlyHistory || {},
-        workHistory: res.workHistory || {},
-      });
+  } else if (message.type === "CLEAR_DATA") {
+    chrome.storage.local.clear(() => {
+      sendResponse({ success: true });
     });
     return true;
   } else if (message.type === "GET_BEST_DATA") {
@@ -2120,9 +1777,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
-
-  return true;
 });
-
-// Also rebuild rules when service worker starts
-updateBlockingRules();

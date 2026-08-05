@@ -75,6 +75,9 @@ const defaultPauseDurationInput = document.getElementById(
 const savePauseSettingsBtn = document.getElementById("savePauseSettingsBtn");
 const pauseSettingsSavedMsg = document.getElementById("pauseSettingsSavedMsg");
 
+// ===== ANALYTICS ELEMENT =====
+const analyticsBtn = document.getElementById("analyticsBtn");
+
 // ===== ACCOMPLISHMENTS / ACHIEVEMENTS ELEMENTS =====
 const accomplishmentBtn = document.getElementById("accomplishmentBtn");
 const achievementsSection = document.getElementById("achievementsSection");
@@ -84,6 +87,18 @@ const achievementsList = document.getElementById("achievementsList");
 // Badge elements (kept for backward compatibility with schedule section)
 const badgeDisplay = document.getElementById("badgeDisplay");
 const badgeCount = document.getElementById("badgeCount");
+
+// ===== DATA MANAGEMENT ELEMENTS =====
+const exportDataBtn = document.getElementById("exportDataBtn");
+const importDataBtn = document.getElementById("importDataBtn");
+const importFileInput = document.getElementById("importFileInput");
+const clearDataBtn = document.getElementById("clearDataBtn");
+const dataStatusMsg = document.getElementById("dataStatusMsg");
+const dataManagementSection = document.getElementById("dataManagementSection");
+
+// Dashboard click counter for data management reveal
+let dashboardClickCount = 0;
+const DATA_MANAGEMENT_REVEAL_COUNT = 5;
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAYS_FULL = [
@@ -102,12 +117,14 @@ let scheduleData = {};
 
 function getLabelForMins(mins) {
   const m = parseFloat(mins);
-  if (m === 60) return "1 hour";
-  if (m === 120) return "2 hours";
-  if (m === 180) return "3 hours";
-  if (m === 240) return "4 hours";
-  if (m === 360) return "6 hours";
-  return `${mins} minutes`;
+  if (m === 0) return "0 minutes";
+  if (m < 60) return `${m} minutes`;
+  const hours = Math.floor(m / 60);
+  const remainingMins = m % 60;
+  if (remainingMins === 0) {
+    return `${hours} hour${hours > 1 ? "s" : ""}`;
+  }
+  return `${hours} hour${hours > 1 ? "s" : ""} ${remainingMins} minutes`;
 }
 
 // Navigation View Triggers
@@ -128,6 +145,16 @@ navDashboard.addEventListener("click", () => {
   viewDashboard.classList.add("active");
   startDashboardRefresh();
   renderAnalytics();
+
+  // Increment dashboard click counter and reveal data management after 5 clicks
+  dashboardClickCount++;
+  if (
+    dashboardClickCount >= DATA_MANAGEMENT_REVEAL_COUNT &&
+    dataManagementSection
+  ) {
+    dataManagementSection.style.display = "block";
+  }
+
   // Don't load streak/badge inline displays anymore - use Accomplishment button instead
 });
 
@@ -571,6 +598,13 @@ closeAchievementsBtn.addEventListener("click", () => {
 });
 
 // ===== END ACCOMPLISHMENTS ACHIEVEMENTS UI =====
+
+// Analytics button click handler
+if (analyticsBtn) {
+  analyticsBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "OPEN_ANALYTICS" });
+  });
+}
 
 // Helper to reset all range buttons to default style
 function resetRangeButtons() {
@@ -1437,6 +1471,56 @@ pauseOptionsBtn.addEventListener("click", (e) => {
     pauseDurationSelector.style.display === "block" ? "none" : "block";
 });
 
+// Pause duration option buttons (5m, 10m, 15m, 30m, 1h)
+pauseDurationOptions.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const mins = parseInt(btn.getAttribute("data-mins"));
+    pauseDurationSelector.style.display = "none";
+    chrome.runtime.sendMessage({ type: "GET_STATE" }, (response) => {
+      if (!response) return;
+      if (response.state === "RUNNING") {
+        chrome.runtime.sendMessage(
+          { type: "PAUSE_WITH_DURATION", durationMinutes: mins },
+          (res) => {
+            if (res && res.success) {
+              checkTimerState();
+            } else if (res && res.reason === "Max pauses reached") {
+              alert(
+                "Max pauses reached for this session. Increase the limit in Edit Schedule > Pause Settings.",
+              );
+            }
+          },
+        );
+      }
+    });
+  });
+});
+
+// Custom pause button
+customPauseBtn.addEventListener("click", () => {
+  const mins = parseInt(customPauseMins.value);
+  if (!mins || mins < 1) return;
+  pauseDurationSelector.style.display = "none";
+  customPauseMins.value = "";
+  chrome.runtime.sendMessage({ type: "GET_STATE" }, (response) => {
+    if (!response) return;
+    if (response.state === "RUNNING") {
+      chrome.runtime.sendMessage(
+        { type: "PAUSE_WITH_DURATION", durationMinutes: mins },
+        (res) => {
+          if (res && res.success) {
+            checkTimerState();
+          } else if (res && res.reason === "Max pauses reached") {
+            alert(
+              "Max pauses reached for this session. Increase the limit in Edit Schedule > Pause Settings.",
+            );
+          }
+        },
+      );
+    }
+  });
+});
+
 // Pause button - just pauses/resumes, no popup
 pauseBtn.addEventListener("click", () => {
   pauseDurationSelector.style.display = "none";
@@ -1458,6 +1542,16 @@ pauseBtn.addEventListener("click", () => {
   });
 });
 
+// End Session button
+endBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "END" }, (res) => {
+    if (res && res.success) {
+      pauseDurationSelector.style.display = "none";
+      checkTimerState();
+    }
+  });
+});
+
 closeBtn.addEventListener("click", () => window.close());
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -1466,39 +1560,115 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-// Live dashboard progress refresh (every second)
-let dashboardInterval = null;
+// ===== DATA MANAGEMENT =====
 
-function startDashboardRefresh() {
-  if (dashboardInterval) clearInterval(dashboardInterval);
-  // immediate first render
-  renderProgressBar();
-  dashboardInterval = setInterval(() => {
-    if (navDashboard.classList.contains("active")) {
-      renderProgressBar();
-    }
-  }, 1000);
+function showDataStatus(message, isError = false) {
+  if (!dataStatusMsg) return;
+  dataStatusMsg.textContent = message;
+  dataStatusMsg.style.display = "block";
+  dataStatusMsg.style.backgroundColor = isError ? "#fee" : "#efe";
+  dataStatusMsg.style.border = isError
+    ? "1px solid #e74c3c"
+    : "1px solid #2ecc71";
+  dataStatusMsg.style.borderRadius = "4px";
+  dataStatusMsg.style.padding = "8px";
+  dataStatusMsg.style.marginTop = "8px";
+  dataStatusMsg.style.fontSize = "12px";
+
+  setTimeout(() => {
+    dataStatusMsg.style.display = "none";
+  }, 5000);
 }
 
-function stopDashboardRefresh() {
-  if (dashboardInterval) {
-    clearInterval(dashboardInterval);
-    dashboardInterval = null;
-  }
-}
+// Export data
+exportDataBtn
+  ? exportDataBtn.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "EXPORT_DATA" }, (res) => {
+        if (!res || !res.success) {
+          showDataStatus("Failed to export data", true);
+          return;
+        }
+        const dataStr = JSON.stringify(res.data, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const today = new Date();
+        const filename = `pomodoro-data-${today.toISOString().split("T")[0]}.json`;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showDataStatus("Data exported successfully!");
+      });
+    })
+  : console.warn("exportDataBtn not found");
 
-checkTimerState();
+// Import data
+importDataBtn
+  ? importDataBtn.addEventListener("click", () => {
+      if (importFileInput) {
+        importFileInput.click();
+      }
+    })
+  : console.warn("importDataBtn not found");
 
-setInterval(() => {
-  chrome.runtime.sendMessage({ type: "GET_STATE" }, (response) => {
-    if (!response) return;
-    if (response.state === "RUNNING") {
-      updateDisplayEngine(response.remainingTime, response.totalDurationMins);
-    } else if (response.state === "OVERTIME") {
-      updateOvertimeUI(response.overtimeSeconds || 0);
-    }
-  });
-}, 1000);
+// Handle file input change for import
+importFileInput
+  ? importFileInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (!file.name.endsWith(".json")) {
+        showDataStatus("Please select a JSON file", true);
+        importFileInput.value = "";
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          chrome.runtime.sendMessage({ type: "IMPORT_DATA", data }, (res) => {
+            if (res && res.success) {
+              showDataStatus(`Imported ${res.count} data keys successfully!`);
+              // Reload the popup to reflect changes
+              setTimeout(() => window.close(), 1500);
+            } else {
+              showDataStatus(res?.reason || "Import failed", true);
+            }
+          });
+        } catch (err) {
+          showDataStatus("Invalid JSON file", true);
+        }
+      };
+      reader.readAsText(file);
+      importFileInput.value = "";
+    })
+  : console.warn("importFileInput not found");
+
+// Clear all data
+clearDataBtn
+  ? clearDataBtn.addEventListener("click", () => {
+      if (
+        !confirm(
+          "This will permanently delete ALL your data (work history, schedule, settings, badges, etc.). Are you sure?",
+        )
+      )
+        return;
+
+      chrome.runtime.sendMessage({ type: "CLEAR_DATA" }, (res) => {
+        if (res && res.success) {
+          showDataStatus("All data cleared! Reloading...", true);
+          // Reload the popup to reflect changes
+          setTimeout(() => window.close(), 1500);
+        } else {
+          showDataStatus("Failed to clear data", true);
+        }
+      });
+    })
+  : console.warn("clearDataBtn not found");
+
+// ===== END DATA MANAGEMENT =====
 
 // ===== BLOCKING UI =====
 
@@ -1851,15 +2021,43 @@ function updatePauseButtonWithResumeTimer() {
   });
 }
 
-// Analytics button
-const analyticsBtn = document.getElementById("analyticsBtn");
-if (analyticsBtn) {
-  analyticsBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "OPEN_ANALYTICS" });
-  });
-}
-
 // Run the resume timer update every second alongside the main timer
 setInterval(() => {
   updatePauseButtonWithResumeTimer();
+}, 1000);
+
+// ===== RESUME TIMER COUNTDOWN DISPLAY ===== END
+
+// Live dashboard progress refresh (every second)
+let dashboardInterval = null;
+
+function startDashboardRefresh() {
+  if (dashboardInterval) clearInterval(dashboardInterval);
+  // immediate first render
+  renderProgressBar();
+  dashboardInterval = setInterval(() => {
+    if (navDashboard.classList.contains("active")) {
+      renderProgressBar();
+    }
+  }, 1000);
+}
+
+function stopDashboardRefresh() {
+  if (dashboardInterval) {
+    clearInterval(dashboardInterval);
+    dashboardInterval = null;
+  }
+}
+
+checkTimerState();
+
+setInterval(() => {
+  chrome.runtime.sendMessage({ type: "GET_STATE" }, (response) => {
+    if (!response) return;
+    if (response.state === "RUNNING") {
+      updateDisplayEngine(response.remainingTime, response.totalDurationMins);
+    } else if (response.state === "OVERTIME") {
+      updateOvertimeUI(response.overtimeSeconds || 0);
+    }
+  });
 }, 1000);
