@@ -135,53 +135,72 @@ function processHourlyData(hourlyHistory, workHistory) {
     }
   }
 
-  // Get date keys for the selected time range
+  // Get date keys for the selected time range.
+  // "week" = current calendar week from Sunday up to today (so on Tue it's Sun,Mon,Tue = 3 days)
+  // "month" = 1st of current month up to today
   function getDateKeysForBarRange(range) {
     const now = new Date();
     if (range === "today") return [getDateKey(now)];
     const keys = [];
-    const days = range === "week" ? 7 : range === "month" ? 31 : 90;
-    for (let i = 0; i < days; i++) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      keys.push(getDateKey(d));
+    if (range === "week") {
+      // Start from Sunday of the current week
+      const dayOfWeek = now.getDay(); // 0 = Sunday
+      for (let i = dayOfWeek; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        keys.push(getDateKey(d));
+      }
+    } else if (range === "month") {
+      const currentMonth = now.getMonth();
+      for (let i = 0; i < 31; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        if (d.getMonth() !== currentMonth) break;
+        keys.push(getDateKey(d));
+      }
+    } else {
+      // 90 days
+      for (let i = 0; i < 90; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        keys.push(getDateKey(d));
+      }
     }
     return keys;
   }
 
-  // Filter hourlyHistory to only selected time range
+  // Get all date keys for the selected time range
   const barDateKeys = getDateKeysForBarRange(currentBarRange);
-  const filteredHourlyHistory = {};
-  for (const key of barDateKeys) {
-    if (hourlyHistory[key]) {
-      filteredHourlyHistory[key] = hourlyHistory[key];
-    }
-  }
 
-  // Process hourlyHistory (only hours within the sleep filter range)
-  for (const [dateKey, hours] of Object.entries(filteredHourlyHistory)) {
+  // Process ALL days that have passed so far in the time range.
+  // The denominator is the number of days from the start of the range up to today.
+  // For example on Tuesday, divide by 3 (Sun, Mon, Tue).
+  // Even if 0 work was done on a particular day, it still counts in the denominator.
+  // This shows the true average per day that has passed.
+  const numDays = barDateKeys.length;
+
+  for (const dateKey of barDateKeys) {
     const dayIdx = getDayFromKey(dateKey);
+    const hours = hourlyHistory[dateKey] || {};
     let dayTotal = 0;
     for (let h = 0; h < 24; h++) {
       // Skip hours outside the sleep filter range (with wrap-around support)
       if (!isHourInRange(h, hourFilterStart, hourFilterEnd)) continue;
       const mins = hours[h] || 0;
-      if (mins > 0) {
-        hourlyTotals[h] += mins;
-        hourlyCounts[h]++;
-        hourlyByDayOfWeek[dayIdx][h] += mins;
-        dayTotal += mins;
-      }
+      hourlyTotals[h] += mins;
+      hourlyByDayOfWeek[dayIdx][h] += mins;
+      dayTotal += mins;
     }
-    // Add to daily totals if not already there
-    if (!dailyTotals[dateKey]) {
+    // Add to daily totals if there was actual work and not already recorded
+    if (dayTotal > 0 && !dailyTotals[dateKey]) {
       dailyTotals[dateKey] = dayTotal;
     }
   }
 
-  // Calculate averages
-  const hourlyAverages = hourlyTotals.map((total, h) =>
-    hourlyCounts[h] > 0 ? Math.round(total / hourlyCounts[h]) : 0,
+  // Calculate averages — divide by the total number of days passed in the range
+  // (e.g., on Tuesday = 3 days, on Wednesday = 4 days, etc.)
+  const hourlyAverages = hourlyTotals.map((total) =>
+    numDays > 0 ? Math.round(total / numDays) : 0,
   );
 
   // Find peak and weak hour
@@ -399,6 +418,7 @@ function renderBarChart(data) {
       scales: {
         y: {
           beginAtZero: true,
+          max: 60, // Always show up to 60 minutes so you can see how much work per hour
           ticks: {
             font: { size: 10 },
             callback: (v) => `${v}m`,
@@ -835,4 +855,5 @@ document.addEventListener("DOMContentLoaded", () => {
   setupBarRange();
   loadAnalytics();
   loadBadgeData();
+  loadAchievementsData();
 });

@@ -12,7 +12,12 @@
         --border-pink: #fca8b0;
         --text-color: #222;
       }
-
+      html {
+        width: 396px;
+        max-width: 396px;
+        min-width: 396px;
+        scrollbar-width: none;
+      }
       body {
         width: 396px;
         max-width: 396px;
@@ -607,6 +612,62 @@
         font-size: 13px;
         margin-top: 8px;
       }
+
+      /* ===== ACHIEVEMENT SHOWCASE TROPHIES ===== */
+      .showcase-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        padding: 12px;
+        background: linear-gradient(135deg, #fff8e1, #ffecec);
+        border-radius: 8px;
+        border: 1px solid #ffe0b2;
+        margin-bottom: 14px;
+      }
+      .showcase-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 64px;
+        cursor: pointer;
+        transition: transform 0.2s;
+      }
+      .showcase-item:hover {
+        transform: scale(1.1);
+      }
+      .showcase-icon {
+        width: 44px;
+        height: 44px;
+        object-fit: contain;
+        filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.2));
+      }
+      .showcase-label {
+        font-size: 9px;
+        font-weight: 600;
+        color: #555;
+        margin-top: 2px;
+        text-align: center;
+      }
+      .showcase-empty {
+        text-align: center;
+        padding: 12px;
+        color: #999;
+        font-size: 12px;
+      }
+
+      /* ===== ANALYTICS ACHIEVEMENTS ===== */
+      .analytics-achievements {
+        margin-top: 24px;
+        padding-top: 16px;
+        border-top: 2px solid #f0f0f0;
+      }
+      .analytics-achievements-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--primary-dark-red);
+        margin-bottom: 12px;
+      }
     </style>
   </head>
   <body>
@@ -886,6 +947,72 @@
               </button>
             </div>
           </div>
+          <!-- Inline max pause reached UI -->
+          <div
+            id="maxPauseReachedUI"
+            style="
+              display: none;
+              margin-top: 8px;
+              padding: 10px 12px;
+              background: #fff3cd;
+              border: 1px solid #ffeeba;
+              border-radius: 4px;
+              font-size: 12px;
+            "
+          >
+            <div style="margin-bottom: 6px; color: #856404; font-weight: 600">
+              Max pauses reached (<span id="maxPauseReachedCount">3</span>/<span
+                id="maxPauseReachedLimit"
+                >3</span
+              >)
+            </div>
+            <div style="display: flex; gap: 6px; align-items: center">
+              <span style="color: #666; font-size: 11px">Add:</span>
+              <input
+                type="number"
+                id="maxPauseAddInput"
+                value="1"
+                min="1"
+                max="10"
+                style="
+                  width: 50px;
+                  padding: 4px 6px;
+                  border: 1px solid #ccc;
+                  border-radius: 3px;
+                  font-size: 12px;
+                "
+              />
+              <button
+                id="maxPauseAddBtn"
+                style="
+                  padding: 4px 10px;
+                  background: #b81d18;
+                  color: white;
+                  border: none;
+                  border-radius: 3px;
+                  cursor: pointer;
+                  font-size: 11px;
+                  font-weight: 600;
+                "
+              >
+                Add & Pause
+              </button>
+              <button
+                id="maxPauseCancelBtn"
+                style="
+                  padding: 4px 8px;
+                  background: #f0f0f0;
+                  color: #666;
+                  border: 1px solid #ccc;
+                  border-radius: 3px;
+                  cursor: pointer;
+                  font-size: 11px;
+                "
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -916,6 +1043,12 @@
               id="marker14"
               style="left: 0%"
               >14h</span
+            >
+            <span
+              class="dashboard-progress-marker"
+              id="marker16"
+              style="left: 0%"
+              >16h</span
             >
           </div>
         </div>
@@ -1086,8 +1219,12 @@
           "
         >
           <div style="text-align: left; display: flex; gap: 8px">
-            <button id="scheduleToggleBtn" class="schedule-toggle-link">
-              Edit Schedule
+            <button
+              id="editToggleBtn"
+              class="schedule-toggle-link"
+              style="color: #999"
+            >
+              Edit
             </button>
             <button
               id="analyticsBtn"
@@ -1117,6 +1254,10 @@
             </button>
           </div>
 
+          <div id="achievementShowcase" style="display: none">
+            <!-- Showcase trophies will be injected here -->
+          </div>
+
           <div id="achievementsList" class="achievements-list">
             <!-- Honor cards will be injected here -->
           </div>
@@ -1126,387 +1267,381 @@
           </div>
         </div>
 
-        <!-- ===== DATA MANAGEMENT SECTION ===== -->
-        <div id="dataManagementSection" style="display: none">
-          <hr
-            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
-          />
-          <strong
-            style="
-              font-size: 14px;
-              color: #5c6bc0;
-              display: block;
-              margin-bottom: 4px;
-            "
-            >📦 Data Management</strong
-          >
-          <div style="font-size: 11px; color: #666; margin-bottom: 8px">
-            Export your progress and data to keep safe, or import after
-            switching browsers/computers.
-          </div>
-
-          <div style="display: flex; gap: 8px; margin-bottom: 8px">
-            <button
-              id="exportDataBtn"
+        <div id="editSection" style="display: none">
+          <!-- ===== DATA MANAGEMENT SECTION ===== -->
+          <div id="dataManagementSection" style="display: none">
+            <hr
               style="
-                flex: 1;
-                padding: 10px;
-                background: #5c6bc0;
-                color: white;
+                margin: 16px 0;
                 border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 13px;
-                font-weight: 500;
+                border-top: 1px solid #e5e5ea;
               "
-            >
-              Export Data
-            </button>
-            <button
-              id="importDataBtn"
-              style="
-                flex: 1;
-                padding: 10px;
-                background: var(--primary-red);
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 13px;
-                font-weight: 500;
-              "
-            >
-              Import Data
-            </button>
-          </div>
-
-          <input
-            type="file"
-            id="importFileInput"
-            accept=".json,application/json"
-            style="display: none"
-          />
-
-          <button
-            id="clearDataBtn"
-            style="
-              width: 100%;
-              padding: 8px;
-              background: #e74c3c;
-              color: white;
-              border: none;
-              border-radius: 4px;
-              cursor: pointer;
-              font-size: 12px;
-              font-weight: 500;
-            "
-          >
-            Clear All Data (Reset)
-          </button>
-
-          <div
-            id="dataStatusMsg"
-            style="
-              display: none;
-              margin-top: 8px;
-              font-size: 12px;
-              padding: 8px;
-              border-radius: 4px;
-            "
-          ></div>
-        </div>
-
-        <!-- Schedule section (hidden by default) -->
-        <div id="dashboardSchedule" style="display: none">
-          <div
-            style="
-              padding: 10px;
-              background: #fff5f5;
-              border: 1px solid #f5c6cb;
-              border-radius: 4px;
-              margin-bottom: 12px;
-            "
-          >
-            <strong style="font-size: 13px; color: var(--primary-dark-red)"
-              >Weekly Schedule</strong
-            >
-            <div style="font-size: 11px; color: #666; margin-top: 2px">
-              Add time-consuming activities per day so we know how much time you
-              have for work.
-            </div>
-          </div>
-
-          <div class="schedule-day-tabs" id="scheduleDayTabs">
-            <!-- Dynamically generated -->
-          </div>
-
-          <div id="scheduleActivities">
-            <!-- Dynamically generated -->
-          </div>
-
-          <button id="addActivityBtn" class="add-activity-btn">
-            + Add Activity
-          </button>
-          <button id="scheduleSaveBtn" class="schedule-save-btn">
-            Save Schedule
-          </button>
-          <div id="scheduleSavedMsg" class="schedule-saved-msg">Saved!</div>
-
-          <!-- === STREAK SECTION (inside schedule) === -->
-          <hr
-            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
-          />
-
-          <div id="streakSection" style="padding: 0; margin-bottom: 12px">
+            />
             <strong
               style="
                 font-size: 14px;
-                color: var(--primary-dark-red);
+                color: #5c6bc0;
                 display: block;
                 margin-bottom: 4px;
               "
-              >Streak</strong
+              >Data Management</strong
             >
-            <div
-              id="streakDetails"
-              style="font-size: 12px; color: #555; line-height: 1.8"
-            >
-              <!-- Dynamically populated -->
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+              Export your progress and data to keep safe, or import after
+              switching browsers/computers.
             </div>
-            <div
-              id="streakRecoverSection"
+
+            <div style="display: flex; gap: 8px; margin-bottom: 8px">
+              <button
+                id="exportDataBtn"
+                style="
+                  flex: 1;
+                  padding: 10px;
+                  background: #5c6bc0;
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-size: 13px;
+                  font-weight: 500;
+                "
+              >
+                Export Data
+              </button>
+              <button
+                id="importDataBtn"
+                style="
+                  flex: 1;
+                  padding: 10px;
+                  background: var(--primary-red);
+                  color: white;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-size: 13px;
+                  font-weight: 500;
+                "
+              >
+                Import Data
+              </button>
+            </div>
+
+            <input
+              type="file"
+              id="importFileInput"
+              accept=".json,application/json"
+              style="display: none"
+            />
+
+            <button
+              id="clearDataBtn"
               style="
-                display: none;
-                margin-top: 10px;
-                padding: 10px;
-                background: #fff8e1;
-                border: 1px solid #ffe0b2;
+                width: 100%;
+                padding: 8px;
+                background: #e74c3c;
+                color: white;
+                border: none;
                 border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+                font-weight: 500;
               "
             >
-              <div style="font-size: 12px; color: #e65100; margin-bottom: 8px">
-                ⚠️ Your streak broke yesterday! Use 1 streak saver to recover
-                it?
+              Clear All Data (Reset)
+            </button>
+
+            <div
+              id="dataStatusMsg"
+              style="
+                display: none;
+                margin-top: 8px;
+                font-size: 12px;
+                padding: 8px;
+                border-radius: 4px;
+              "
+            ></div>
+          </div>
+
+          <!-- === BLOCKING SECTION === -->
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
+          />
+
+          <div style="padding: 0; margin-bottom: 12px">
+            <button
+              id="blockingToggleBtn"
+              style="
+                width: 100%;
+                padding: 10px 12px;
+                background: #fafafa;
+                border: 1px solid #e5e5ea;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--primary-dark-red);
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              "
+            >
+              <span>Blocking & Privacy</span>
+              <span id="blockingToggleCaret">▾</span>
+            </button>
+          </div>
+
+          <div id="blockingSection" style="display: none">
+            <div style="padding: 0; margin-bottom: 12px">
+              <strong
+                style="
+                  font-size: 14px;
+                  color: var(--primary-dark-red);
+                  display: block;
+                  margin-bottom: 4px;
+                "
+                >Blocked Sites</strong
+              >
+              <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+                Add domain keywords to block entire sites (e.g. "facebook"
+                blocks facebook.com, facebook.xyz, etc.)
               </div>
-              <div style="display: flex; gap: 8px">
-                <button
-                  id="useStreakSaverBtn"
+
+              <div style="display: flex; gap: 6px; margin-bottom: 10px">
+                <input
+                  type="text"
+                  id="blockedPatternInput"
+                  placeholder="e.g. facebook"
                   style="
                     flex: 1;
                     padding: 8px;
-                    background: #e67e22;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 13px;
+                  "
+                />
+                <button
+                  id="addBlockedPatternBtn"
+                  style="
+                    padding: 8px 14px;
+                    background: var(--primary-red);
                     color: white;
                     border: none;
                     border-radius: 4px;
                     cursor: pointer;
-                    font-size: 12px;
                     font-weight: bold;
                   "
                 >
-                  Use Streak Saver
+                  Add
                 </button>
+              </div>
+
+              <div id="blockedPatternsList" style="margin-bottom: 8px">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+
+            <hr
+              style="
+                margin: 16px 0;
+                border: none;
+                border-top: 1px solid #e5e5ea;
+              "
+            />
+
+            <div style="padding: 0">
+              <strong
+                style="
+                  font-size: 14px;
+                  color: var(--primary-dark-red);
+                  display: block;
+                  margin-bottom: 4px;
+                "
+                >YouTube Channels</strong
+              >
+              <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+                Block YouTube channels. Leave time empty for permanent block, or
+                set a daily max minutes.
+              </div>
+
+              <div
+                style="
+                  display: flex;
+                  gap: 6px;
+                  margin-bottom: 10px;
+                  flex-wrap: wrap;
+                "
+              >
+                <input
+                  type="text"
+                  id="youtubeChannelInput"
+                  placeholder="Channel name or @handle"
+                  style="
+                    flex: 2;
+                    min-width: 120px;
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 13px;
+                  "
+                />
+                <input
+                  type="number"
+                  id="youtubeChannelMaxMins"
+                  placeholder="Max mins (optional)"
+                  style="
+                    flex: 1;
+                    min-width: 80px;
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 13px;
+                  "
+                />
                 <button
-                  id="dismissStreakSaverBtn"
+                  id="addYouTubeChannelBtn"
+                  style="
+                    padding: 8px 14px;
+                    background: var(--primary-red);
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: bold;
+                  "
+                >
+                  Add
+                </button>
+              </div>
+
+              <div id="youtubeChannelsList" style="margin-bottom: 8px">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+
+            <hr
+              style="
+                margin: 16px 0;
+                border: none;
+                border-top: 1px solid #e5e5ea;
+              "
+            />
+
+            <div style="padding: 0">
+              <strong
+                style="
+                  font-size: 14px;
+                  color: var(--primary-dark-red);
+                  display: block;
+                  margin-bottom: 4px;
+                "
+                >Blocked Keywords</strong
+              >
+              <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+                Block YouTube videos and search results containing these
+                keywords (e.g. "movie explained"). Case-insensitive.
+              </div>
+
+              <div style="display: flex; gap: 6px; margin-bottom: 10px">
+                <input
+                  type="text"
+                  id="blockedKeywordInput"
+                  placeholder="e.g. movie explained"
                   style="
                     flex: 1;
                     padding: 8px;
-                    background: #f0f0f0;
-                    color: #555;
-                    border: 1px solid #ccc;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 13px;
+                  "
+                />
+                <button
+                  id="addBlockedKeywordBtn"
+                  style="
+                    padding: 8px 14px;
+                    background: var(--primary-red);
+                    color: white;
+                    border: none;
                     border-radius: 4px;
                     cursor: pointer;
-                    font-size: 12px;
+                    font-weight: bold;
                   "
                 >
-                  No, keep it
+                  Add
                 </button>
+              </div>
+
+              <div id="blockedKeywordsList" style="margin-bottom: 8px">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+
+            <hr
+              style="
+                margin: 16px 0;
+                border: none;
+                border-top: 1px solid #e5e5ea;
+              "
+            />
+
+            <div style="padding: 0">
+              <strong
+                style="
+                  font-size: 14px;
+                  color: var(--primary-dark-red);
+                  display: block;
+                  margin-bottom: 4px;
+                "
+                >External Timer Extension</strong
+              >
+              <div style="font-size: 11px; color: #666; margin-bottom: 8px">
+                When your timer extension starts, this extension will
+                auto-enable Focus Mode. Find the ID in chrome://extensions
+                (enable Developer mode).
+              </div>
+              <div style="display: flex; gap: 6px; margin-bottom: 10px">
+                <input
+                  type="text"
+                  id="externalTimerId"
+                  placeholder="Paste extension ID here..."
+                  style="
+                    flex: 1;
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 13px;
+                  "
+                />
+                <button
+                  id="saveExternalTimerIdBtn"
+                  style="
+                    padding: 8px 14px;
+                    background: var(--primary-red);
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: bold;
+                  "
+                >
+                  Save
+                </button>
+              </div>
+              <div
+                id="externalTimerSavedMsg"
+                style="
+                  display: none;
+                  font-size: 12px;
+                  color: #2ecc71;
+                  margin-top: 4px;
+                "
+              >
+                External timer extension ID saved!
               </div>
             </div>
           </div>
 
-          <!-- === BLOCKING SECTION (hidden inside schedule) === -->
-          <hr
-            style="margin: 20px 0; border: none; border-top: 1px solid #e5e5ea"
-          />
-
-          <div style="padding: 0; margin-bottom: 12px">
-            <strong
-              style="
-                font-size: 14px;
-                color: var(--primary-dark-red);
-                display: block;
-                margin-bottom: 4px;
-              "
-              >🚫 Blocked Sites</strong
-            >
-            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
-              Add domain keywords to block entire sites (e.g. "facebook" blocks
-              facebook.com, facebook.xyz, etc.)
-            </div>
-
-            <div style="display: flex; gap: 6px; margin-bottom: 10px">
-              <input
-                type="text"
-                id="blockedPatternInput"
-                placeholder="e.g. facebook"
-                style="
-                  flex: 1;
-                  padding: 8px;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  font-size: 13px;
-                "
-              />
-              <button
-                id="addBlockedPatternBtn"
-                style="
-                  padding: 8px 14px;
-                  background: var(--primary-red);
-                  color: white;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-weight: bold;
-                "
-              >
-                Add
-              </button>
-            </div>
-
-            <div id="blockedPatternsList" style="margin-bottom: 8px">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-
-          <hr
-            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
-          />
-
-          <div style="padding: 0">
-            <strong
-              style="
-                font-size: 14px;
-                color: var(--primary-dark-red);
-                display: block;
-                margin-bottom: 4px;
-              "
-              >YouTube Channels</strong
-            >
-            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
-              Block YouTube channels. Leave time empty for permanent block, or
-              set a daily max minutes.
-            </div>
-
-            <div
-              style="
-                display: flex;
-                gap: 6px;
-                margin-bottom: 10px;
-                flex-wrap: wrap;
-              "
-            >
-              <input
-                type="text"
-                id="youtubeChannelInput"
-                placeholder="Channel name or @handle"
-                style="
-                  flex: 2;
-                  min-width: 120px;
-                  padding: 8px;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  font-size: 13px;
-                "
-              />
-              <input
-                type="number"
-                id="youtubeChannelMaxMins"
-                placeholder="Max mins (optional)"
-                style="
-                  flex: 1;
-                  min-width: 80px;
-                  padding: 8px;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  font-size: 13px;
-                "
-              />
-              <button
-                id="addYouTubeChannelBtn"
-                style="
-                  padding: 8px 14px;
-                  background: var(--primary-red);
-                  color: white;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-weight: bold;
-                "
-              >
-                Add
-              </button>
-            </div>
-
-            <div id="youtubeChannelsList" style="margin-bottom: 8px">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-          <hr
-            style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
-          />
-
-          <div style="padding: 0">
-            <strong
-              style="
-                font-size: 14px;
-                color: var(--primary-dark-red);
-                display: block;
-                margin-bottom: 4px;
-              "
-            >
-              Blocked Keywords</strong
-            >
-            <div style="font-size: 11px; color: #666; margin-bottom: 8px">
-              Block YouTube videos and search results containing these keywords
-              (e.g. "movie explained"). Case-insensitive, no bonus option.
-            </div>
-
-            <div style="display: flex; gap: 6px; margin-bottom: 10px">
-              <input
-                type="text"
-                id="blockedKeywordInput"
-                placeholder="e.g. movie explained"
-                style="
-                  flex: 1;
-                  padding: 8px;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  font-size: 13px;
-                "
-              />
-              <button
-                id="addBlockedKeywordBtn"
-                style="
-                  padding: 8px 14px;
-                  background: var(--primary-red);
-                  color: white;
-                  border: none;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-weight: bold;
-                "
-              >
-                Add
-              </button>
-            </div>
-
-            <div id="blockedKeywordsList" style="margin-bottom: 8px">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-          <!-- === END BLOCKING SECTION === -->
-
-          <!-- === PAUSE SETTINGS SECTION === -->
+          <!-- === PAUSE SETTINGS === -->
           <hr
             style="margin: 16px 0; border: none; border-top: 1px solid #e5e5ea"
           />
@@ -1519,7 +1654,7 @@
                 display: block;
                 margin-bottom: 4px;
               "
-              >⏸️ Pause Settings</strong
+              >Pause Settings</strong
             >
             <div style="font-size: 11px; color: #666; margin-bottom: 8px">
               Set max pauses per session and default pause duration.
@@ -1594,12 +1729,11 @@
               Pause settings saved!
             </div>
           </div>
-
-          <!-- === END BLOCKING SECTION === -->
         </div>
       </div>
     </div>
 
+    <script src="achievements.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

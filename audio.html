@@ -1,7 +1,56 @@
 <!doctype html>
 <html>
   <head>
-    <script src="audio.js"></script>
+    <meta charset="utf-8" />
+    <script>
+      // ===== BULLETPROOF AUDIO PLAYER =====
+      // This script runs in an offscreen document.
+      // The sound file to play is passed via URL query parameter: ?sound=timeisabout_to_up.mp3
+      // It auto-plays immediately on load, no message passing needed.
+      // If the "loop" param is present (e.g. ?sound=file.mp3&loop=1), it loops until stopped.
+
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const soundFile = params.get("sound") || "timeisabout_to_up.mp3";
+        const shouldLoop = params.has("loop");
+        const fullUrl = chrome.runtime.getURL(soundFile);
+
+        console.log("Audio offscreen: playing", soundFile, "loop:", shouldLoop);
+
+        const audio = new Audio(fullUrl);
+        audio.volume = 1.0;
+        audio.loop = shouldLoop;
+
+        audio.play().catch(function (err) {
+          console.error("Audio play failed:", err);
+          setTimeout(function () {
+            window.close();
+          }, 1000);
+        });
+
+        // If not looping, close after the sound finishes
+        if (!shouldLoop) {
+          audio.addEventListener("ended", function () {
+            setTimeout(function () {
+              window.close();
+            }, 200);
+          });
+          // Fallback timeout in case duration is unknown
+          setTimeout(function () {
+            if (audio.paused) {
+              window.close();
+            }
+          }, 10000);
+        }
+      })();
+    </script>
   </head>
-  <body></body>
+  <body>
+    <p>Audio playing: <span id="status">loading...</span></p>
+    <script>
+      document.getElementById("status").textContent =
+        new URLSearchParams(location.search).get("sound") ||
+        "timeisabout_to_up.mp3";
+    </script>
+  </body>
 </html>

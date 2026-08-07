@@ -21,7 +21,7 @@ if (blockedKeyword) {
 
   // Check if bonus was already used
   chrome.runtime.sendMessage({ type: "GET_YOUTUBE_CHANNELS" }, (res) => {
-    const channels = res.channels || {};
+    const channels = (res && res.channels) || {};
     const data = channels[channelKey];
     if (data && data.bonusUsed) {
       bonusBtn.style.display = "none";

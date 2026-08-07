@@ -16,13 +16,6 @@ let pauseDurationSecs = 0; // How long the user set for the pause timer
 let resumeTimerEndTime = 0; // When the resume timer expires
 let resumeOvertimeSeconds = 0; // How long past the resume timer they've gone
 
-// Audio for resume timer warning (plays via offscreen document in MV3 service worker)
-let resumeAudioPlayed = false; // Track if the warning audio has been played
-
-// Offscreen document ready promise
-let offscreenDocReadyPromise = null;
-let offscreenDocReadyResolve = null;
-
 // Initialize badge formatting
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -42,66 +35,6 @@ function initializePauseSettings() {
     }
   });
 }
-
-// ===== OFFFSCREEN DOCUMENT MANAGEMENT =====
-
-// Ensures the offscreen document (audio.html) is created so we can play audio
-async function ensureOffscreenDocument() {
-  if (offscreenDocReadyPromise) return offscreenDocReadyPromise;
-
-  offscreenDocReadyPromise = new Promise((resolve) => {
-    offscreenDocReadyResolve = resolve;
-  });
-
-  try {
-    await chrome.offscreen.createDocument({
-      url: chrome.runtime.getURL("audio.html"),
-      reasons: ["AUDIO_PLAYBACK"],
-      justification: "Play notification sounds for timer events",
-    });
-  } catch (e) {
-    // If it already exists, that's fine — resolve immediately
-    if (e.message && e.message.includes("already exists")) {
-      offscreenDocReadyResolve();
-    } else {
-      console.error("Failed to create offscreen document:", e);
-      offscreenDocReadyResolve(); // Resolve anyway to not block forever
-    }
-  }
-}
-
-// Listen for the offscreen document ready signal
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "OFFSCREEN_READY") {
-    if (offscreenDocReadyResolve) {
-      offscreenDocReadyResolve();
-      offscreenDocReadyResolve = null;
-    }
-  }
-});
-
-// Play the resume timer warning via the offscreen document
-async function playResumeTimerWarning() {
-  await ensureOffscreenDocument();
-  // Wait a tick for the document to be ready
-  await new Promise((r) => setTimeout(r, 500));
-  try {
-    await chrome.runtime.sendMessage({
-      type: "PLAY_SOUND",
-      soundFile: chrome.runtime.getURL("timeisabout_to_up.mp3"),
-    });
-  } catch (e) {
-    console.error("Failed to send play sound message:", e);
-  }
-}
-
-// Stop the resume timer warning audio and reset the play flag
-function stopResumeTimerAudio() {
-  resumeAudioPlayed = false;
-  chrome.runtime.sendMessage({ type: "STOP_SOUND" }).catch(() => {});
-}
-
-// ===== END OFFFSCREEN DOCUMENT MANAGEMENT =====
 
 // Returns date key with 6-hour offset (so sessions up to 6AM count toward previous day)
 function getDateKey(date) {
@@ -313,8 +246,12 @@ function startOvertimeEngine() {
 // ===== RESUME TIMER ENGINE =====
 // Counts down from pauseDurationSecs, then counts up in resumeOvertime
 
+// Tracks whether the "about to end" alert has been played for this pause
+let resumeAlertPlayed = false;
+
 function startResumeTimerEngine() {
   clearIntervalEngine();
+  resumeAlertPlayed = false;
 
   if (currentState === "PAUSED" || currentState === "PAUSED_OVERTIME") {
     // Show the main timer remaining time on badge with grey background
@@ -335,11 +272,10 @@ function startResumeTimerEngine() {
           const mainTimeLeft = Math.round(pauseTimeLeft / 1000);
           updateBadgeText(mainTimeLeft);
           if (remaining % 5 === 0) saveStateToStorage();
-
-          // Play warning audio when resume timer hits 10 seconds remaining
-          if (remaining <= 10 && !resumeAudioPlayed) {
-            resumeAudioPlayed = true;
-            playResumeTimerWarning();
+          // Alert ONCE when the resume timer is about to end (within 10 seconds)
+          if (remaining <= 10 && !resumeAlertPlayed) {
+            resumeAlertPlayed = true;
+            playSound("timeisabout_to_up.mp3", false).catch(() => {});
           }
         } else {
           // Resume timer expired! Switch to PAUSED_OVERTIME
@@ -366,30 +302,40 @@ function startResumeTimerEngine() {
 
 function applyPauseDeduction() {
   const todayKey = getDateKey(new Date());
-  const lateSeconds = Math.round((Date.now() - resumeTimerEndTime) / 1000);
+  chrome.storage.local.get(["workHistory", "pauseDeductionDays"], (res) => {
+    const deductionDays = res.pauseDeductionDays || {};
+    // Can only deduct once per day
+    if (deductionDays[todayKey]) return;
 
-  if (lateSeconds <= 0) return;
+    let deductionMinutes = 0;
+    if (totalDurationMins >= 180) {
+      deductionMinutes = 60; // 1 hour for sessions >= 3 hours
+    } else if (totalDurationMins >= 60) {
+      deductionMinutes = 30; // 30 minutes for sessions >= 1 hour
+    }
 
-  // Deduct only the actual late time, capped at 10 minutes maximum
-  const lateMinutes = Math.round(lateSeconds / 60);
-  const deductionMinutes = Math.min(lateMinutes, 10);
-
-  if (deductionMinutes > 0) {
-    chrome.storage.local.get(["workHistory"], (res) => {
+    if (deductionMinutes > 0) {
       const history = res.workHistory || {};
       history[todayKey] = Math.max(
         0,
         (history[todayKey] || 0) - deductionMinutes,
       );
-      chrome.storage.local.set({ workHistory: history }, () => {
-        updateStreakData();
-      });
-    });
-  }
+      deductionDays[todayKey] = true;
+      chrome.storage.local.set(
+        { workHistory: history, pauseDeductionDays: deductionDays },
+        () => {
+          updateStreakData();
+        },
+      );
+    }
+  });
 }
 
 function handleSessionCompletion() {
   clearIntervalEngine();
+
+  // Capture pause count BEFORE resetting - needed for flow badge check
+  const sessionPauses = pauseCount;
 
   // Reset pause-related state
   pauseCount = 0;
@@ -404,7 +350,7 @@ function handleSessionCompletion() {
     startOvertimeEngine();
   } else {
     const sessionMinutes = totalDurationMins;
-    const sessionPauses = pauseCount; // Track pauses for flow achievement
+    // Track pauses for flow achievement
 
     currentState = "IDLE";
     chrome.action.setBadgeText({ text: "✔" });
@@ -1095,8 +1041,54 @@ function updateBestWeekMonth() {
   );
 }
 
+// ===== AUDIO SYSTEM (Offscreen Document) =====
+// Creates an offscreen audio document to play sounds.
+// The loop parameter makes the sound play on repeat (for pause alerts).
+async function playSound(soundFile, shouldLoop) {
+  try {
+    // Close any existing offscreen audio document first
+    await chrome.offscreen.closeDocument().catch(() => {});
+    // Create new offscreen document with the sound
+    const params = new URLSearchParams({ sound: soundFile });
+    if (shouldLoop) params.set("loop", "1");
+    await chrome.offscreen.createDocument({
+      url: `audio.html?${params.toString()}`,
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "Play timer alert sounds",
+    });
+  } catch (err) {
+    console.error("Failed to play sound:", err);
+  }
+}
+
+// Stops any playing sound and closes the offscreen document
+async function stopSound() {
+  try {
+    await chrome.offscreen.closeDocument().catch(() => {});
+  } catch (err) {
+    console.error("Failed to stop sound:", err);
+  }
+}
+
 function notifyStateChange() {
   chrome.runtime.sendMessage({ type: "STATE_CHANGED" }).catch(() => {});
+}
+
+// Send message to external timer extension (if configured)
+function notifyExternalExtension(action) {
+  chrome.storage.sync.get(["externalTimerId"], (result) => {
+    const extId = (result.externalTimerId || "").trim();
+    if (!extId) return;
+    chrome.runtime.sendMessage(extId, { action }, () => {
+      // Ignore errors (extension might not be installed)
+      if (chrome.runtime.lastError) {
+        console.log(
+          "External extension not reachable:",
+          chrome.runtime.lastError.message,
+        );
+      }
+    });
+  });
 }
 
 // ===== BLOCKING FEATURE =====
@@ -1399,18 +1391,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
-    resumeAudioPlayed = false;
 
     endTime = Date.now() + remainingTime * 1000;
 
     startTimerEngine();
     updateBadgeText(remainingTime);
     notifyStateChange();
+    // Notify external timer extension that focus session started
+    notifyExternalExtension("timerStart");
     sendResponse({ success: true });
   } else if (message.type === "TOGGLE_PAUSE") {
     if (currentState === "RUNNING") {
       // Use default pause duration from settings (10 minutes)
-      chrome.storage.local.get(["pauseSettings"], (res) => {
+      chrome.storage.local.get(["pauseSettings"], async (res) => {
         const settings = res.pauseSettings || {
           maxPauses: 3,
           defaultPauseDuration: 10,
@@ -1429,6 +1422,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         startResumeTimerEngine();
         saveStateToStorage();
         notifyStateChange();
+        // Play looping alert sound to remind user to unpause
+        await playSound("timeisabout_to_up.mp3", true).catch(() => {});
         sendResponse({
           success: true,
           pauseCount,
@@ -1441,13 +1436,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       currentState === "PAUSED" ||
       currentState === "PAUSED_OVERTIME"
     ) {
-      // Resume the timer
+      // Resume the timer - stop the looping pause alert sound
+      stopSound();
       currentState = "RUNNING";
       endTime = Date.now() + pauseTimeLeft;
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
-      stopResumeTimerAudio();
       clearIntervalEngine();
       startTimerEngine();
       saveStateToStorage();
@@ -1543,13 +1538,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
-      resumeAudioPlayed = false;
 
       chrome.action.setBadgeText({ text: "" });
       chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
 
       saveStateToStorage();
       notifyStateChange();
+      // Notify external timer extension that focus session stopped
+      notifyExternalExtension("timerStop");
       sendResponse({ success: true });
     });
     return true;
@@ -1566,13 +1562,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
-    resumeAudioPlayed = false;
 
     chrome.action.setBadgeText({ text: "" });
     chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
 
     saveStateToStorage();
     notifyStateChange();
+    // Notify external timer extension that focus session stopped
+    notifyExternalExtension("timerStop");
     sendResponse({ success: true });
   } else if (message.type === "GET_STATE") {
     chrome.storage.local.get(["timerPersistentState"], (res) => {
@@ -1626,89 +1623,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       sendResponse({
         state: currentState,
-        remainingTime,
-        totalDurationMins,
+        remainingTime: remainingTime,
+        totalDurationMins: totalDurationMins,
         isBreak: isBreakSession,
-        overtimeSeconds,
-        pauseCount,
-        pauseDurationSecs,
-        resumeTimerRemaining,
-        resumeTimerOvertime,
+        overtimeSeconds: overtimeSeconds,
+        pauseCount: pauseCount,
+        pauseDurationSecs: pauseDurationSecs,
+        resumeTimerRemaining: resumeTimerRemaining,
+        resumeTimerOvertime: resumeTimerOvertime,
       });
     });
     return true;
-  } else if (message.type === "GET_STREAK_DATA") {
-    ensureStreakData((streakData) => {
-      const todayKey = getDateKey(new Date());
-      chrome.storage.local.get(["workHistory"], (store) => {
-        const todayMinutes = store.workHistory?.[todayKey] || 0;
-        const canRecover =
-          streakData.streakSavers > 0 && streakData.brokenStreakDate !== null;
-        sendResponse({ streakData, todayMinutes, canRecover });
-      });
-    });
-    return true;
-  } else if (message.type === "GET_BADGE_DATA") {
-    chrome.storage.local.get(["badgeData"], (res) => {
-      sendResponse({ badgeData: res.badgeData || {} });
-    });
-    return true;
-  } else if (message.type === "RECOVER_STREAK") {
-    ensureStreakData((streakData) => {
-      if (streakData.streakSavers <= 0) {
-        sendResponse({ success: false, reason: "No streak savers available" });
-        return;
-      }
-      if (!streakData.brokenStreakDate) {
-        sendResponse({ success: false, reason: "No broken streak to recover" });
-        return;
-      }
-      streakData.streakSavers--;
-      streakData.brokenStreakDate = null;
-      // Restore the streak by setting lastStreakDate to yesterday
-      const yesterdayKey = getYesterdayKey();
-      streakData.lastStreakDate = yesterdayKey;
-      streakData.currentStreak++;
-      chrome.storage.local.set({ streakData }, () => {
-        sendResponse({ success: true });
-      });
-    });
-    return true;
-  } else if (message.type === "GET_BLOCKED_PATTERNS") {
-    chrome.storage.local.get(["blockedPatterns"], (res) => {
-      sendResponse({ patterns: res.blockedPatterns || [] });
-    });
-    return true;
-  } else if (message.type === "SAVE_BLOCKED_PATTERNS") {
-    chrome.storage.local.set({ blockedPatterns: message.patterns }, () => {
-      updateBlockingRules();
-      sendResponse({ success: true });
-    });
-    return true;
-  } else if (message.type === "GET_YOUTUBE_CHANNELS") {
-    chrome.storage.local.get(["youtubeBlockedChannels"], (res) => {
-      sendResponse({ channels: res.youtubeBlockedChannels || {} });
-    });
-    return true;
-  } else if (message.type === "SAVE_YOUTUBE_CHANNELS") {
-    chrome.storage.local.set(
-      { youtubeBlockedChannels: message.channels },
-      () => {
-        sendResponse({ success: true });
-      },
-    );
-    return true;
-  } else if (message.type === "GET_BLOCKED_KEYWORDS") {
-    chrome.storage.local.get(["blockedKeywords"], (res) => {
-      sendResponse({ keywords: res.blockedKeywords || [] });
-    });
-    return true;
-  } else if (message.type === "SAVE_BLOCKED_KEYWORDS") {
-    chrome.storage.local.set({ blockedKeywords: message.keywords }, () => {
-      sendResponse({ success: true });
-    });
-    return true;
-  } else if (message.type === "GET_PAUSE_SETTINGS") {
+  }
+
+  // ===== PAUSE SETTINGS MESSAGES =====
+  else if (message.type === "GET_PAUSE_SETTINGS") {
     chrome.storage.local.get(["pauseSettings"], (res) => {
       sendResponse({
         settings: res.pauseSettings || {
@@ -1723,48 +1652,556 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
     });
     return true;
-  } else if (
-    message.type === "GET_HOURLY_ANALYTICS" ||
-    message.type === "GET_ANALYTICS"
-  ) {
-    chrome.storage.local.get(
-      ["workHistory", "hourlyHistory", "bestData"],
-      (res) => {
+  }
+
+  // ===== STREAK MESSAGES =====
+  else if (message.type === "GET_STREAK_DATA") {
+    // Wait for streak data to be updated before responding
+    // This ensures we return fresh data, not stale cached values
+    updateStreakData(() => {
+      chrome.storage.local.get(["streakData", "workHistory"], (res) => {
+        const streakData = res.streakData || {
+          currentStreak: 0,
+          longestStreak: 0,
+          streakSavers: 0,
+          lastStreakDate: null,
+          progressToNextSaver: 0,
+          brokenStreakDate: null,
+        };
+        const history = res.workHistory || {};
+        const todayKey = getDateKey(new Date());
+        const yesterdayKey = getYesterdayKey();
+        const todayMinutes = history[todayKey] || 0;
+
+        let canRecover = false;
+        if (streakData.brokenStreakDate && streakData.streakSavers > 0) {
+          const brokenDate = new Date(streakData.brokenStreakDate);
+          const todayDate = new Date(todayKey);
+          const diffDays = Math.round((todayDate - brokenDate) / 86400000);
+          if (diffDays === 1) {
+            canRecover = true;
+          }
+        }
+
         sendResponse({
-          workHistory: res.workHistory || {},
-          hourlyHistory: res.hourlyHistory || {},
-          bestData: res.bestData || {},
+          streakData,
+          todayMinutes,
+          canRecover,
         });
-      },
-    );
+      });
+    });
     return true;
-  } else if (message.type === "EXPORT_DATA") {
+  } else if (message.type === "RECOVER_STREAK") {
+    chrome.storage.local.get(["streakData", "workHistory"], (res) => {
+      const streakData = res.streakData || {
+        currentStreak: 0,
+        longestStreak: 0,
+        streakSavers: 0,
+        lastStreakDate: null,
+        progressToNextSaver: 0,
+        brokenStreakDate: null,
+      };
+      const history = res.workHistory || {};
+      const todayKey = getDateKey(new Date());
+      const yesterdayKey = getYesterdayKey();
+
+      if (!streakData.brokenStreakDate || streakData.streakSavers <= 0) {
+        sendResponse({
+          success: false,
+          reason: "Cannot recover streak at this time.",
+        });
+        return;
+      }
+
+      const brokenDate = new Date(streakData.brokenStreakDate);
+      const todayDate = new Date(todayKey);
+      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
+      if (diffDays !== 1) {
+        sendResponse({
+          success: false,
+          reason: "Recovery window has expired.",
+        });
+        return;
+      }
+
+      streakData.streakSavers -= 1;
+      streakData.lastStreakDate = yesterdayKey;
+      streakData.brokenStreakDate = null;
+
+      if (streakData.currentStreak > streakData.longestStreak) {
+        streakData.longestStreak = streakData.currentStreak;
+      }
+
+      chrome.storage.local.set({ streakData }, () => {
+        sendResponse({ success: true, streakData });
+      });
+    });
+    return true;
+  }
+
+  // Blocking related messages
+  else if (message.type === "GET_BLOCKED_PATTERNS") {
+    chrome.storage.local.get(["blockedPatterns"], (res) => {
+      sendResponse({ patterns: res.blockedPatterns || [] });
+    });
+    return true;
+  } else if (message.type === "ADD_BLOCKED_PATTERN") {
+    chrome.storage.local.get(["blockedPatterns"], async (res) => {
+      const patterns = res.blockedPatterns || [];
+      const exists = patterns.some(
+        (p) => (typeof p === "string" ? p : p.pattern) === message.pattern,
+      );
+      if (!exists) {
+        patterns.push({ pattern: message.pattern, deleteClicks: 0 });
+        await chrome.storage.local.set({ blockedPatterns: patterns });
+        await updateBlockingRules();
+      }
+      sendResponse({ success: true, patterns });
+    });
+    return true;
+  } else if (message.type === "INCREMENT_DELETE_CLICK") {
+    chrome.storage.local.get(["blockedPatterns"], async (res) => {
+      let patterns = res.blockedPatterns || [];
+      let found = false;
+      for (let i = 0; i < patterns.length; i++) {
+        const p =
+          typeof patterns[i] === "string" ? patterns[i] : patterns[i].pattern;
+        if (p === message.pattern) {
+          if (typeof patterns[i] === "string") {
+            patterns[i] = { pattern: patterns[i], deleteClicks: 1 };
+          } else {
+            patterns[i].deleteClicks = (patterns[i].deleteClicks || 0) + 1;
+          }
+          found = true;
+          break;
+        }
+      }
+      if (found) {
+        await chrome.storage.local.set({ blockedPatterns: patterns });
+        sendResponse({
+          success: true,
+          deleteClicks:
+            patterns.find(
+              (p) =>
+                (typeof p === "string" ? p : p.pattern) === message.pattern,
+            )?.deleteClicks || 0,
+        });
+      } else {
+        sendResponse({ success: false });
+      }
+    });
+    return true;
+  } else if (message.type === "REMOVE_BLOCKED_PATTERN") {
+    chrome.storage.local.get(["blockedPatterns"], async (res) => {
+      let patterns = res.blockedPatterns || [];
+      const target = patterns.find(
+        (p) => (typeof p === "string" ? p : p.pattern) === message.pattern,
+      );
+      if (target && (target.deleteClicks || 0) >= 200) {
+        patterns = patterns.filter(
+          (p) => (typeof p === "string" ? p : p.pattern) !== message.pattern,
+        );
+        await chrome.storage.local.set({ blockedPatterns: patterns });
+        await updateBlockingRules();
+        sendResponse({ success: true, patterns });
+      } else {
+        sendResponse({ success: false, clicks: target?.deleteClicks || 0 });
+      }
+    });
+    return true;
+  } else if (message.type === "GET_YOUTUBE_CHANNELS") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], (res) => {
+      sendResponse({ channels: res.youtubeBlockedChannels || {} });
+    });
+    return true;
+  } else if (message.type === "ADD_YOUTUBE_CHANNEL") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
+      const channels = res.youtubeBlockedChannels || {};
+      channels[message.channelKey] = {
+        maxMinutes: message.maxMinutes || null,
+        usedMinutes: 0,
+        lastReset: getTodayStr(),
+        bonusUsed: false,
+        deleteClicks: 0,
+      };
+      await chrome.storage.local.set({ youtubeBlockedChannels: channels });
+      sendResponse({ success: true, channels });
+    });
+    return true;
+  } else if (message.type === "INCREMENT_YOUTUBE_DELETE_CLICK") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
+      const channels = res.youtubeBlockedChannels || {};
+      const data = channels[message.channelKey];
+      if (data) {
+        data.deleteClicks = (data.deleteClicks || 0) + 1;
+        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
+        sendResponse({ success: true, deleteClicks: data.deleteClicks });
+      } else {
+        sendResponse({ success: false });
+      }
+    });
+    return true;
+  } else if (message.type === "REMOVE_YOUTUBE_CHANNEL") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
+      const channels = res.youtubeBlockedChannels || {};
+      const data = channels[message.channelKey];
+      if (data && (data.deleteClicks || 0) >= 200) {
+        delete channels[message.channelKey];
+        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
+        sendResponse({ success: true, channels });
+      } else {
+        sendResponse({ success: false, clicks: data?.deleteClicks || 0 });
+      }
+    });
+    return true;
+  } else if (message.type === "ADD_5_MINUTES_BONUS") {
+    chrome.storage.local.get(["youtubeBlockedChannels"], async (res) => {
+      const channels = res.youtubeBlockedChannels || {};
+      const data = channels[message.channelKey];
+      if (data && !data.bonusUsed) {
+        data.maxMinutes = (data.maxMinutes || 0) + 5;
+        data.bonusUsed = true;
+        data.lastReset = getTodayStr();
+        await chrome.storage.local.set({ youtubeBlockedChannels: channels });
+        sendResponse({ success: true, newMax: data.maxMinutes });
+      } else {
+        sendResponse({
+          success: false,
+          reason:
+            data && data.bonusUsed
+              ? "Bonus already used today"
+              : "Channel not found",
+        });
+      }
+    });
+    return true;
+  } else if (message.type === "CHECK_VIDEO_CHANNEL") {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (!tabId) {
+      sendResponse({ blocked: false });
+      return true;
+    }
+
+    const checkStr = (message.channelHandle || message.channelName || "")
+      .toLowerCase()
+      .replace(/^@/, "");
+
     chrome.storage.local.get(
-      [
-        "workHistory",
-        "hourlyHistory",
-        "streakData",
-        "badgeData",
-        "bestData",
-        "daySchedule",
-        "blockedPatterns",
-        "youtubeBlockedChannels",
-        "blockedKeywords",
-        "pauseSettings",
-      ],
+      ["youtubeBlockedChannels", "blockedPatterns"],
       (res) => {
-        sendResponse({ data: res });
+        const patterns = res.blockedPatterns || [];
+        if (isBlockedByPattern(message.url, patterns)) {
+          redirectToBlocked(tabId, null);
+          sendResponse({ blocked: true });
+          return;
+        }
+
+        const channels = res.youtubeBlockedChannels || {};
+        let matchedKey = null;
+
+        for (const key of Object.keys(channels)) {
+          const keyLower = key.toLowerCase().replace(/^@/, "");
+          if (
+            checkStr.includes(keyLower) ||
+            keyLower.includes(checkStr) ||
+            message.channelHandle?.toLowerCase().includes(keyLower) ||
+            message.channelName?.toLowerCase().includes(keyLower)
+          ) {
+            matchedKey = key;
+            break;
+          }
+        }
+
+        if (!matchedKey) {
+          sendResponse({ blocked: false });
+          return;
+        }
+
+        const data = channels[matchedKey];
+        if (!data.maxMinutes) {
+          redirectToBlocked(tabId, matchedKey);
+          sendResponse({ blocked: true });
+        } else {
+          if (!youtubeActiveTabs[tabId]) {
+            startYouTubeTimeTracking(tabId, matchedKey);
+          } else {
+            youtubeActiveTabs[tabId].channelKey = matchedKey;
+          }
+          checkChannelBlock(matchedKey, data, tabId);
+          sendResponse({ blocked: false, tracking: true });
+        }
       },
     );
     return true;
-  } else if (message.type === "IMPORT_DATA") {
-    chrome.storage.local.set(message.data, () => {
+  } else if (message.type === "GET_BLOCKED_KEYWORDS") {
+    chrome.storage.local.get(["blockedKeywords"], (res) => {
+      sendResponse({ keywords: res.blockedKeywords || [] });
+    });
+    return true;
+  } else if (message.type === "ADD_BLOCKED_KEYWORD") {
+    chrome.storage.local.get(["blockedKeywords"], async (res) => {
+      const keywords = res.blockedKeywords || [];
+      const kw = message.keyword.toLowerCase().trim();
+      const exists = keywords.some(
+        (k) => (typeof k === "string" ? k : k.keyword) === kw,
+      );
+      if (!exists) {
+        keywords.push({ keyword: kw, deleteClicks: 0 });
+        await chrome.storage.local.set({ blockedKeywords: keywords });
+      }
+      sendResponse({ success: true, keywords });
+    });
+    return true;
+  } else if (message.type === "INCREMENT_KEYWORD_DELETE_CLICK") {
+    chrome.storage.local.get(["blockedKeywords"], async (res) => {
+      const keywords = res.blockedKeywords || [];
+      for (let i = 0; i < keywords.length; i++) {
+        const kw =
+          typeof keywords[i] === "string" ? keywords[i] : keywords[i].keyword;
+        if (kw === message.keyword) {
+          if (typeof keywords[i] === "string") {
+            keywords[i] = { keyword: keywords[i], deleteClicks: 1 };
+          } else {
+            keywords[i].deleteClicks = (keywords[i].deleteClicks || 0) + 1;
+          }
+          break;
+        }
+      }
+      await chrome.storage.local.set({ blockedKeywords: keywords });
       sendResponse({ success: true });
     });
     return true;
-  } else if (message.type === "CLEAR_DATA") {
-    chrome.storage.local.clear(() => {
-      sendResponse({ success: true });
+  } else if (message.type === "REMOVE_BLOCKED_KEYWORD") {
+    chrome.storage.local.get(["blockedKeywords"], async (res) => {
+      let keywords = res.blockedKeywords || [];
+      const target = keywords.find(
+        (k) => (typeof k === "string" ? k : k.keyword) === message.keyword,
+      );
+      if (target && (target.deleteClicks || 0) >= 200) {
+        keywords = keywords.filter(
+          (k) => (typeof k === "string" ? k : k.keyword) !== message.keyword,
+        );
+        await chrome.storage.local.set({ blockedKeywords: keywords });
+        sendResponse({ success: true, keywords });
+      } else {
+        sendResponse({ success: false, clicks: target?.deleteClicks || 0 });
+      }
+    });
+    return true;
+  } else if (message.type === "CHECK_VIDEO_KEYWORDS") {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (!tabId) {
+      sendResponse({ blocked: false });
+      return true;
+    }
+
+    chrome.storage.local.get(["blockedKeywords"], (res) => {
+      const keywords = res.blockedKeywords || [];
+      const keywordStrs = keywords.map((k) =>
+        (typeof k === "string" ? k : k.keyword).toLowerCase(),
+      );
+      const text = (message.text || "").toLowerCase();
+      const matchedKeyword = keywordStrs.find((kw) => text.includes(kw));
+
+      if (matchedKeyword) {
+        const params = `?keyword=${encodeURIComponent(matchedKeyword)}`;
+        chrome.tabs.update(tabId, {
+          url: chrome.runtime.getURL(`blocked.html${params}`),
+        });
+        sendResponse({ blocked: true, keyword: matchedKeyword });
+      } else {
+        sendResponse({
+          blocked: false,
+          keywords: keywordStrs,
+        });
+
+        if (message.url && message.url.includes("/results")) {
+          chrome.tabs
+            .sendMessage(tabId, {
+              type: "HIDE_BLOCKED_RESULTS",
+              keywords: keywordStrs,
+            })
+            .catch(() => {});
+        }
+      }
+    });
+    return true;
+  }
+
+  // ===== BADGE MESSAGES =====
+  else if (message.type === "GET_BADGE_DATA") {
+    // Get existing badge data and initialize missing fields
+    chrome.storage.local.get(["badgeData", "workHistory"], (res) => {
+      const existingData = res.badgeData || {};
+      const history = res.workHistory || {};
+
+      // Build badgeData with all required fields initialized
+      let badgeData = {
+        monthly: existingData.monthly || 0,
+        lifetime: existingData.lifetime || 0,
+        lastBadgeDate: existingData.lastBadgeDate || null,
+        badgeMonth: existingData.badgeMonth || null,
+        // New achievement fields - initialize from existing or defaults
+        day1_30day_completed: existingData.day1_30day_completed || false,
+        day1_30day_14hr_completed:
+          existingData.day1_30day_14hr_completed || false,
+        thousand_hours_completed:
+          existingData.thousand_hours_completed || false,
+        elon_musk_weekly_completed:
+          existingData.elon_musk_weekly_completed || false,
+        bronze_16hr_count: existingData.bronze_16hr_count || 0,
+        six_hour_flow_count: existingData.six_hour_flow_count || 0,
+        silver_3x16_count: existingData.silver_3x16_count || 0,
+      };
+
+      // Scan history for bronze_16hr_count if not migrated
+      if (!existingData.bronze_16hr_count && !existingData.migrated) {
+        let bronzeCount = 0;
+        for (const mins of Object.values(history)) {
+          if (mins >= 960) bronzeCount++;
+        }
+        badgeData.bronze_16hr_count = bronzeCount;
+        badgeData.migrated = true;
+        chrome.storage.local.set({ badgeData }).catch(() => {});
+      }
+
+      // Check for thousand hours if not already completed
+      if (!badgeData.thousand_hours_completed) {
+        let totalLifetimeHours = 0;
+        for (const mins of Object.values(history)) {
+          totalLifetimeHours += mins / 60;
+        }
+        if (totalLifetimeHours >= 1000) {
+          badgeData.thousand_hours_completed = true;
+        }
+      }
+
+      // Check for 30 consecutive days of 10+ hours
+      if (!badgeData.day1_30day_completed) {
+        const sortedKeys = Object.keys(history).sort().reverse();
+        if (sortedKeys.length >= 30) {
+          let consecutive10HourCount = 0;
+          for (let i = 0; i < sortedKeys.length; i++) {
+            const key = sortedKeys[i];
+            const mins = history[key];
+            const expectedDate = new Date();
+            expectedDate.setDate(expectedDate.getDate() - i);
+            const expectedKey = getDateKey(expectedDate);
+            if (key === expectedKey && mins >= 600) {
+              consecutive10HourCount++;
+              if (consecutive10HourCount >= 30) {
+                badgeData.day1_30day_completed = true;
+                break;
+              }
+            } else {
+              consecutive10HourCount = 0;
+            }
+          }
+        }
+      }
+
+      // Check for 30 consecutive days of 14+ hours
+      if (!badgeData.day1_30day_14hr_completed) {
+        const sortedKeys = Object.keys(history).sort().reverse();
+        if (sortedKeys.length >= 30) {
+          let consecutive14HourCount = 0;
+          for (let i = 0; i < sortedKeys.length; i++) {
+            const key = sortedKeys[i];
+            const mins = history[key];
+            const expectedDate = new Date();
+            expectedDate.setDate(expectedDate.getDate() - i);
+            const expectedKey = getDateKey(expectedDate);
+            if (key === expectedKey && mins >= 840) {
+              consecutive14HourCount++;
+              if (consecutive14HourCount >= 30) {
+                badgeData.day1_30day_14hr_completed = true;
+                break;
+              }
+            } else {
+              consecutive14HourCount = 0;
+            }
+          }
+        }
+      }
+
+      // Check for 3 consecutive 16-hour days
+      if (!badgeData.silver_3x16_count) {
+        const nowDate = new Date();
+        let silverCount = 0;
+        for (let i = 2; i < 31; i++) {
+          for (let j = i; j < i + 3; j++) {
+            const d = new Date(nowDate);
+            d.setDate(d.getDate() - j);
+            const key = getDateKey(d);
+            if ((history[key] || 0) < 960) break;
+            if (j === i + 2) silverCount++;
+          }
+        }
+        badgeData.silver_3x16_count = silverCount;
+      }
+
+      // Check for weekly 100+ hours
+      if (!badgeData.elon_musk_weekly_completed) {
+        const nowDate = new Date();
+        const sortedKeys = Object.keys(history).sort().reverse();
+        for (
+          let weekStart = 0;
+          weekStart < sortedKeys.length - 6;
+          weekStart += 7
+        ) {
+          let weekTotal = 0;
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(nowDate);
+            d.setDate(d.getDate() - weekStart - i);
+            const key = getDateKey(d);
+            weekTotal += history[key] || 0;
+          }
+          if (weekTotal >= 6000) {
+            badgeData.elon_musk_weekly_completed = true;
+            break;
+          }
+        }
+      }
+
+      // ===== COMPUTE PROGRESS DATA FOR UI DISPLAY =====
+      // This ensures achievements show correct progress (e.g. "X/100 hours this week")
+      // even when the user hasn't just completed a session
+      const progress = calculateProgressData(history);
+      badgeData.progress = {
+        threeZeroChallenge: {
+          current: progress.consecutive10HrDays,
+          target: 30,
+          description: "10+ hours daily",
+        },
+        threeZeroChallenge14: {
+          current: progress.consecutive14HrDays,
+          target: 30,
+          description: "14+ hours daily",
+        },
+        thousandHours: {
+          current: Math.floor(progress.totalHours),
+          target: 1000,
+          description: "Total hours",
+        },
+        elonMusk: {
+          current: Math.floor(progress.weeklyHours),
+          target: 100,
+          description: "Weekly hours",
+        },
+      };
+
+      sendResponse({ badgeData: badgeData });
+    });
+    return true;
+  }
+
+  // ===== ANALYTICS MESSAGES =====
+  else if (message.type === "GET_HOURLY_ANALYTICS") {
+    chrome.storage.local.get(["hourlyHistory", "workHistory"], (res) => {
+      sendResponse({
+        hourlyHistory: res.hourlyHistory || {},
+        workHistory: res.workHistory || {},
+      });
     });
     return true;
   } else if (message.type === "GET_BEST_DATA") {
@@ -1777,4 +2214,104 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
+
+  // ===== SOUND MESSAGES =====
+  else if (message.type === "PLAY_SOUND") {
+    playSound(message.sound || "timeisabout_to_up.mp3", message.loop || false);
+    sendResponse({ success: true });
+    return true;
+  } else if (message.type === "STOP_SOUND") {
+    stopSound();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // ===== DATA MANAGEMENT MESSAGES =====
+  else if (message.type === "EXPORT_DATA") {
+    chrome.storage.local.get(null, (allData) => {
+      sendResponse({ success: true, data: allData });
+    });
+    return true;
+  } else if (message.type === "IMPORT_DATA") {
+    if (!message.data || typeof message.data !== "object") {
+      sendResponse({ success: false, reason: "Invalid data format" });
+      return true;
+    }
+    chrome.storage.local.get(null, (existing) => {
+      const keysToSet = {};
+      let count = 0;
+      for (const [key, value] of Object.entries(message.data)) {
+        if (key !== "timerPersistentState" && key !== "recentDurations") {
+          keysToSet[key] = value;
+          count++;
+        }
+      }
+      chrome.storage.local.set(keysToSet, () => {
+        sendResponse({ success: true, count });
+      });
+    });
+    return true;
+  } else if (message.type === "CLEAR_DATA") {
+    chrome.storage.local.clear(() => {
+      // Reset state
+      clearIntervalEngine();
+      currentState = "IDLE";
+      remainingTime = 0;
+      totalDurationMins = 0;
+      endTime = 0;
+      pauseTimeLeft = 0;
+      isBreakSession = false;
+      overtimeSeconds = 0;
+      pauseCount = 0;
+      pauseDurationSecs = 0;
+      resumeTimerEndTime = 0;
+      resumeOvertimeSeconds = 0;
+      chrome.action.setBadgeText({ text: "" });
+      chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
+      // Reinitialize necessary defaults
+      initializePauseSettings();
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  return true;
 });
+
+// ===== CROSS-EXTENSION MESSAGES (from external timer extensions) =====
+chrome.runtime.onMessageExternal.addListener(
+  (message, sender, sendResponse) => {
+    // Check if the sender is a trusted timer extension
+    chrome.storage.sync.get(["externalTimerId"], (result) => {
+      const trustedId = (result.externalTimerId || "").trim();
+
+      if (trustedId && sender.id === trustedId) {
+        if (message && message.action === "timerStart") {
+          // Timer started in the external extension - enable focus mode
+          chrome.storage.sync.set({ focusModeActive: true }, () => {
+            chrome.action.setBadgeText({ text: "ON" });
+            chrome.action.setBadgeBackgroundColor({ color: "#b71c1c" });
+          });
+          sendResponse({ success: true, focusOn: true });
+        } else if (message && message.action === "timerStop") {
+          // Timer stopped - disable focus mode
+          chrome.storage.sync.set({ focusModeActive: false }, () => {
+            chrome.action.setBadgeText({ text: "" });
+          });
+          sendResponse({ success: true, focusOn: false });
+        } else if (message && message.action === "ping") {
+          // Just check if connection works
+          sendResponse({ success: true, status: "connected" });
+        }
+      } else {
+        sendResponse({ success: false, error: "Untrusted extension" });
+      }
+    });
+
+    // Return true to keep the message channel open for async response
+    return true;
+  },
+);
+
+// Also rebuild rules when service worker starts
+updateBlockingRules();
