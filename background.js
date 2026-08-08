@@ -384,7 +384,6 @@ function handleSessionCompletion() {
 // ===== STREAK SYSTEM =====
 
 const STREAK_THRESHOLD_MINUTES = 720; // 12 hours
-const STREAK_SAVER_INTERVAL = 14; // 14 days = 1 streak saver
 
 // Initialize streak data if not present
 function ensureStreakData(callback) {
@@ -392,29 +391,23 @@ function ensureStreakData(callback) {
     const data = res.streakData || {
       currentStreak: 0,
       longestStreak: 0,
-      streakSavers: 0,
       lastStreakDate: null,
-      progressToNextSaver: 0,
-      brokenStreakDate: null, // dateKey where streak first broke (for 1-day grace check)
     };
     if (callback) callback(data);
   });
 }
 
-// Recursively build the streak from workHistory, scanning backwards day by day
+// Recursively build the streak from workHistory, scanning backwards day by day.
+// Streak is only active if today qualifies. If today doesn't qualify, currentStreak = 0.
 function calculateStreakFromHistory(history) {
   const todayKey = getDateKey(new Date());
-  let streak = 0;
-  let saverIntervalCount = 0;
-  let saversEarned = 0;
+  let currentStreak = 0;
   let lastStreakDate = null;
-  let brokenStreakDate = null;
 
-  // Check if today qualifies first
+  // Check if today qualifies first - streak only counts from today
   const todayMinutes = history[todayKey] || 0;
   if (todayMinutes >= STREAK_THRESHOLD_MINUTES) {
-    streak = 1;
-    saverIntervalCount = 1;
+    currentStreak = 1;
     lastStreakDate = todayKey;
 
     // Walk backwards from yesterday
@@ -424,92 +417,19 @@ function calculateStreakFromHistory(history) {
       const dateKey = formatDateKey(walkDate);
       const minutes = history[dateKey] || 0;
       if (minutes >= STREAK_THRESHOLD_MINUTES) {
-        streak++;
-        saverIntervalCount++;
-        if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
-          saversEarned++;
-          saverIntervalCount = 0;
-        }
+        currentStreak++;
         walkDate.setDate(walkDate.getDate() - 1);
       } else {
         break;
       }
     }
-  } else {
-    // Today doesn't qualify. Check if yesterday qualified.
-    // If so, the streak is "broken" as of today (1-day gap, recoverable)
-    const yesterdayKey = getDateKey(new Date(Date.now() - 86400000));
-    const yesterdayMinutes = history[yesterdayKey] || 0;
-
-    if (yesterdayMinutes >= STREAK_THRESHOLD_MINUTES) {
-      // Streak was active as of yesterday, now broken today (1-day gap)
-      streak = 1;
-      saverIntervalCount = 1;
-      lastStreakDate = yesterdayKey;
-      brokenStreakDate = todayKey;
-
-      // Walk backwards from the day before yesterday
-      let walkDate = new Date(yesterdayKey);
-      walkDate.setDate(walkDate.getDate() - 1);
-      for (let i = 1; i < 365; i++) {
-        const dateKey = formatDateKey(walkDate);
-        const minutes = history[dateKey] || 0;
-        if (minutes >= STREAK_THRESHOLD_MINUTES) {
-          streak++;
-          saverIntervalCount++;
-          if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
-            saversEarned++;
-            saverIntervalCount = 0;
-          }
-          walkDate.setDate(walkDate.getDate() - 1);
-        } else {
-          break;
-        }
-      }
-    } else {
-      // No active streak. Walk backwards to find the most recent qualifying day
-      let walkDate = new Date(todayKey);
-      walkDate.setDate(walkDate.getDate() - 1);
-      for (let i = 1; i < 365; i++) {
-        const dateKey = formatDateKey(walkDate);
-        const minutes = history[dateKey] || 0;
-        if (minutes >= STREAK_THRESHOLD_MINUTES) {
-          // Found the most recent qualifying day - start streak from here
-          streak = 1;
-          saverIntervalCount = 1;
-          lastStreakDate = dateKey;
-
-          // Walk further back
-          walkDate.setDate(walkDate.getDate() - 1);
-          for (let j = 1; j < 365; j++) {
-            const backDateKey = formatDateKey(walkDate);
-            const backMinutes = history[backDateKey] || 0;
-            if (backMinutes >= STREAK_THRESHOLD_MINUTES) {
-              streak++;
-              saverIntervalCount++;
-              if (saverIntervalCount >= STREAK_SAVER_INTERVAL) {
-                saversEarned++;
-                saverIntervalCount = 0;
-              }
-              walkDate.setDate(walkDate.getDate() - 1);
-            } else {
-              break;
-            }
-          }
-          break;
-        }
-        walkDate.setDate(walkDate.getDate() - 1);
-      }
-    }
   }
+  // If today doesn't qualify, currentStreak stays 0 (streak broken immediately)
 
   return {
-    currentStreak: streak,
-    longestStreak: streak, // We'll track the longest separately
-    streakSavers: saversEarned,
+    currentStreak,
+    longestStreak: currentStreak, // We'll track the longest separately
     lastStreakDate,
-    progressToNextSaver: saverIntervalCount,
-    brokenStreakDate,
   };
 }
 
@@ -520,10 +440,7 @@ function updateStreakData(callback) {
     const prevStreakData = res.streakData || {
       currentStreak: 0,
       longestStreak: 0,
-      streakSavers: 0,
       lastStreakDate: null,
-      progressToNextSaver: 0,
-      brokenStreakDate: null,
     };
 
     // Recalculate streak from history
@@ -535,29 +452,9 @@ function updateStreakData(callback) {
       calculated.currentStreak,
     );
 
-    // Preserve previously earned streak savers (don't lose them on recalculation)
-    const streakSavers = Math.max(
-      prevStreakData.streakSavers || 0,
-      calculated.streakSavers,
-    );
-
-    // Preserve brokenStreakDate from previous data if it's still valid
-    let brokenStreakDate = calculated.brokenStreakDate;
-    if (!brokenStreakDate && prevStreakData.brokenStreakDate) {
-      const todayKey = getDateKey(new Date());
-      const brokenDate = new Date(prevStreakData.brokenStreakDate);
-      const todayDate = new Date(todayKey);
-      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
-      if (diffDays === 1) {
-        brokenStreakDate = prevStreakData.brokenStreakDate;
-      }
-    }
-
     const streakData = {
       ...calculated,
       longestStreak,
-      streakSavers,
-      brokenStreakDate,
     };
 
     chrome.storage.local.set({ streakData }, () => {
@@ -1663,77 +1560,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const streakData = res.streakData || {
           currentStreak: 0,
           longestStreak: 0,
-          streakSavers: 0,
           lastStreakDate: null,
-          progressToNextSaver: 0,
-          brokenStreakDate: null,
         };
         const history = res.workHistory || {};
         const todayKey = getDateKey(new Date());
-        const yesterdayKey = getYesterdayKey();
         const todayMinutes = history[todayKey] || 0;
-
-        let canRecover = false;
-        if (streakData.brokenStreakDate && streakData.streakSavers > 0) {
-          const brokenDate = new Date(streakData.brokenStreakDate);
-          const todayDate = new Date(todayKey);
-          const diffDays = Math.round((todayDate - brokenDate) / 86400000);
-          if (diffDays === 1) {
-            canRecover = true;
-          }
-        }
 
         sendResponse({
           streakData,
           todayMinutes,
-          canRecover,
         });
-      });
-    });
-    return true;
-  } else if (message.type === "RECOVER_STREAK") {
-    chrome.storage.local.get(["streakData", "workHistory"], (res) => {
-      const streakData = res.streakData || {
-        currentStreak: 0,
-        longestStreak: 0,
-        streakSavers: 0,
-        lastStreakDate: null,
-        progressToNextSaver: 0,
-        brokenStreakDate: null,
-      };
-      const history = res.workHistory || {};
-      const todayKey = getDateKey(new Date());
-      const yesterdayKey = getYesterdayKey();
-
-      if (!streakData.brokenStreakDate || streakData.streakSavers <= 0) {
-        sendResponse({
-          success: false,
-          reason: "Cannot recover streak at this time.",
-        });
-        return;
-      }
-
-      const brokenDate = new Date(streakData.brokenStreakDate);
-      const todayDate = new Date(todayKey);
-      const diffDays = Math.round((todayDate - brokenDate) / 86400000);
-      if (diffDays !== 1) {
-        sendResponse({
-          success: false,
-          reason: "Recovery window has expired.",
-        });
-        return;
-      }
-
-      streakData.streakSavers -= 1;
-      streakData.lastStreakDate = yesterdayKey;
-      streakData.brokenStreakDate = null;
-
-      if (streakData.currentStreak > streakData.longestStreak) {
-        streakData.longestStreak = streakData.currentStreak;
-      }
-
-      chrome.storage.local.set({ streakData }, () => {
-        sendResponse({ success: true, streakData });
       });
     });
     return true;

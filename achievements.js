@@ -8,7 +8,7 @@ function loadAchievementsData() {
   chrome.runtime.sendMessage({ type: "GET_STREAK_DATA" }, (streakRes) => {
     if (!streakRes) return;
 
-    const { streakData, canRecover } = streakRes;
+    const { streakData } = streakRes;
 
     // Fetch fresh badge data
     chrome.runtime.sendMessage({ type: "GET_BADGE_DATA" }, (badgeRes) => {
@@ -16,19 +16,14 @@ function loadAchievementsData() {
 
       const { badgeData } = badgeRes;
 
-      renderAchievementHonors(streakData, canRecover, badgeData);
+      renderAchievementHonors(streakData, badgeData);
     });
   });
 }
 
 // ===== RENDER ALL HONOR CARDS =====
-function renderAchievementHonors(streakData, canRecover, badgeData) {
-  const {
-    currentStreak = 0,
-    longestStreak = 0,
-    streakSavers = 0,
-    progressToNextSaver = 0,
-  } = streakData;
+function renderAchievementHonors(streakData, badgeData) {
+  const { currentStreak = 0, longestStreak = 0 } = streakData;
 
   const {
     monthly = 0,
@@ -194,14 +189,6 @@ function renderAchievementHonors(streakData, canRecover, badgeData) {
     '<p style="margin: 4px 0;">Longest: <span class="highlight">' +
     longestStreak +
     "</span> days</p>";
-  html +=
-    '<p style="margin: 4px 0;">Streak Savers: <span class="highlight">' +
-    streakSavers +
-    "</span></p>";
-  html +=
-    '<p style="margin: 4px 0; font-size: 11px; color: #888;">Progress to next saver: <span class="highlight">' +
-    progressToNextSaver +
-    "</span>/14</p>";
   html += "</div></div></div>";
 
   // ===== BADGE HONOR CARD (Shows total earned achievement badges) =====
