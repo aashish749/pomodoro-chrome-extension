@@ -9,6 +9,8 @@ let overtimeSeconds = 0; // Tracks extra time spent past break allocation
 // Timestamp-based tracking variables
 let endTime = 0;
 let pauseTimeLeft = 0;
+let sessionStartTime = 0; // Original session start time (never changes on resume)
+let workSegments = []; // Array of {start, end} timestamps for actual worked time
 
 // Pause timer variables
 let pauseCount = 0; // Number of pauses in current session
@@ -114,6 +116,63 @@ function splitSessionAcrossDays(startTime, endTime) {
   return result;
 }
 
+// Splits work segments across days, excluding paused time.
+// segments is an array of {start, end} timestamps.
+// Returns an object mapping dateKey -> minutes actually worked.
+function splitSegmentsAcrossDays(segments) {
+  const result = {};
+  for (const seg of segments) {
+    const start = seg.start;
+    const end = seg.end > 0 ? seg.end : Date.now();
+    if (end <= start) continue;
+    const totalMinutes = Math.round((end - start) / 60000);
+    for (let i = 0; i < totalMinutes; i++) {
+      const minuteTimestamp = start + i * 60000;
+      const key = getDateKey(new Date(minuteTimestamp));
+      result[key] = (result[key] || 0) + 1;
+    }
+  }
+  return result;
+}
+
+// Splits work segments across hours of the day, excluding paused time.
+// Returns an object mapping hour (0-23) -> minutes actually worked.
+function splitSegmentsAcrossHours(segments) {
+  const result = {};
+  for (const seg of segments) {
+    const start = seg.start;
+    const end = seg.end > 0 ? seg.end : Date.now();
+    if (end <= start) continue;
+    const totalMinutes = Math.round((end - start) / 60000);
+    for (let i = 0; i < totalMinutes; i++) {
+      const minuteTimestamp = start + i * 60000;
+      const d = new Date(minuteTimestamp);
+      const hour = d.getHours();
+      result[hour] = (result[hour] || 0) + 1;
+    }
+  }
+  return result;
+}
+
+// Save work segments' hourly data to hourlyHistory
+function saveHourlyDataFromSegments(segments) {
+  const hourSplits = splitSegmentsAcrossHours(segments);
+  if (Object.keys(hourSplits).length === 0) return;
+
+  chrome.storage.local.get(["hourlyHistory"], (res) => {
+    const hourlyHistory = res.hourlyHistory || {};
+    for (const [hourStr, minutes] of Object.entries(hourSplits)) {
+      const dateKey = getDateKey(new Date(segments[0].start));
+      if (!hourlyHistory[dateKey]) {
+        hourlyHistory[dateKey] = {};
+      }
+      hourlyHistory[dateKey][hourStr] =
+        (hourlyHistory[dateKey][hourStr] || 0) + minutes;
+    }
+    chrome.storage.local.set({ hourlyHistory });
+  });
+}
+
 // Helper to save current state to local storage
 function saveStateToStorage() {
   chrome.storage.local.set({
@@ -129,6 +188,8 @@ function saveStateToStorage() {
       pauseDurationSecs,
       resumeTimerEndTime,
       resumeOvertimeSeconds,
+      sessionStartTime,
+      workSegments,
     },
   });
 }
@@ -148,6 +209,9 @@ chrome.storage.local.get(["timerPersistentState"], (res) => {
     pauseDurationSecs = state.pauseDurationSecs || 0;
     resumeTimerEndTime = state.resumeTimerEndTime || 0;
     resumeOvertimeSeconds = state.resumeOvertimeSeconds || 0;
+
+    sessionStartTime = state.sessionStartTime || 0;
+    workSegments = state.workSegments || [];
 
     if (currentState === "RUNNING") {
       const now = Date.now();
@@ -246,12 +310,8 @@ function startOvertimeEngine() {
 // ===== RESUME TIMER ENGINE =====
 // Counts down from pauseDurationSecs, then counts up in resumeOvertime
 
-// Tracks whether the "about to end" alert has been played for this pause
-let resumeAlertPlayed = false;
-
 function startResumeTimerEngine() {
   clearIntervalEngine();
-  resumeAlertPlayed = false;
 
   if (currentState === "PAUSED" || currentState === "PAUSED_OVERTIME") {
     // Show the main timer remaining time on badge with grey background
@@ -272,19 +332,12 @@ function startResumeTimerEngine() {
           const mainTimeLeft = Math.round(pauseTimeLeft / 1000);
           updateBadgeText(mainTimeLeft);
           if (remaining % 5 === 0) saveStateToStorage();
-          // Alert ONCE when the resume timer is about to end (within 10 seconds)
-          if (remaining <= 10 && !resumeAlertPlayed) {
-            resumeAlertPlayed = true;
-            playSound("timeisabout_to_up.mp3", false).catch(() => {});
-          }
         } else {
           // Resume timer expired! Switch to PAUSED_OVERTIME
           currentState = "PAUSED_OVERTIME";
           resumeOvertimeSeconds = 0;
           // Change badge to yellow to alert user
           chrome.action.setBadgeBackgroundColor({ color: "#e67e22" });
-          // Apply deduction (once per day)
-          applyPauseDeduction();
           saveStateToStorage();
           notifyStateChange();
         }
@@ -298,37 +351,6 @@ function startResumeTimerEngine() {
       }
     }, 1000);
   }
-}
-
-function applyPauseDeduction() {
-  const todayKey = getDateKey(new Date());
-  chrome.storage.local.get(["workHistory", "pauseDeductionDays"], (res) => {
-    const deductionDays = res.pauseDeductionDays || {};
-    // Can only deduct once per day
-    if (deductionDays[todayKey]) return;
-
-    let deductionMinutes = 0;
-    if (totalDurationMins >= 180) {
-      deductionMinutes = 60; // 1 hour for sessions >= 3 hours
-    } else if (totalDurationMins >= 60) {
-      deductionMinutes = 30; // 30 minutes for sessions >= 1 hour
-    }
-
-    if (deductionMinutes > 0) {
-      const history = res.workHistory || {};
-      history[todayKey] = Math.max(
-        0,
-        (history[todayKey] || 0) - deductionMinutes,
-      );
-      deductionDays[todayKey] = true;
-      chrome.storage.local.set(
-        { workHistory: history, pauseDeductionDays: deductionDays },
-        () => {
-          updateStreakData();
-        },
-      );
-    }
-  });
 }
 
 function handleSessionCompletion() {
@@ -356,8 +378,15 @@ function handleSessionCompletion() {
     chrome.action.setBadgeText({ text: "✔" });
     chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
 
-    const startTime = endTime - totalDurationMins * 60 * 1000;
-    const daySplits = splitSessionAcrossDays(startTime, endTime);
+    // Close the last work segment if still open
+    if (
+      workSegments.length > 0 &&
+      workSegments[workSegments.length - 1].end === 0
+    ) {
+      workSegments[workSegments.length - 1].end = endTime;
+    }
+
+    const daySplits = splitSegmentsAcrossDays(workSegments);
     chrome.storage.local.get(["workHistory"], (res) => {
       const history = res.workHistory || {};
       for (const [dateKey, minutes] of Object.entries(daySplits)) {
@@ -369,8 +398,8 @@ function handleSessionCompletion() {
       });
     });
 
-    // Save hourly breakdown
-    saveHourlyData(startTime, endTime);
+    // Save hourly breakdown from segments
+    saveHourlyDataFromSegments(workSegments);
 
     // Check and award badge if today's total >= 16 hours
     checkAndAwardBadge(sessionMinutes, sessionPauses);
@@ -398,22 +427,31 @@ function ensureStreakData(callback) {
 }
 
 // Recursively build the streak from workHistory, scanning backwards day by day.
-// Streak is only active if today qualifies. If today doesn't qualify, currentStreak = 0.
+// Streak counts from yesterday backwards, so today's progress doesn't reset it early.
+// The streak only breaks when a full calendar day passes without hitting 12h.
 function calculateStreakFromHistory(history) {
-  const todayKey = getDateKey(new Date());
+  const now = new Date();
+  const todayKey = getDateKey(now);
+  const yesterdayDate = new Date(now);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayKey = formatDateKey(yesterdayDate);
+
   let currentStreak = 0;
   let lastStreakDate = null;
 
-  // Check if today qualifies first - streak only counts from today
+  // Check if yesterday qualified. If not, check if today qualified (new streak starting today).
+  // Otherwise streak is 0.
+  const yesterdayMinutes = history[yesterdayKey] || 0;
   const todayMinutes = history[todayKey] || 0;
-  if (todayMinutes >= STREAK_THRESHOLD_MINUTES) {
-    currentStreak = 1;
-    lastStreakDate = todayKey;
 
-    // Walk backwards from yesterday
-    let walkDate = new Date(todayKey);
+  if (yesterdayMinutes >= STREAK_THRESHOLD_MINUTES) {
+    // Yesterday qualifies — count backwards from yesterday
+    currentStreak = 1;
+    lastStreakDate = yesterdayKey;
+
+    let walkDate = new Date(yesterdayKey);
     walkDate.setDate(walkDate.getDate() - 1);
-    for (let i = 1; i < 365; i++) {
+    for (let i = 0; i < 365; i++) {
       const dateKey = formatDateKey(walkDate);
       const minutes = history[dateKey] || 0;
       if (minutes >= STREAK_THRESHOLD_MINUTES) {
@@ -423,12 +461,16 @@ function calculateStreakFromHistory(history) {
         break;
       }
     }
+  } else if (todayMinutes >= STREAK_THRESHOLD_MINUTES) {
+    // Today qualifies but yesterday didn't — new streak starting today
+    currentStreak = 1;
+    lastStreakDate = todayKey;
   }
-  // If today doesn't qualify, currentStreak stays 0 (streak broken immediately)
+  // If neither qualifies, streak stays 0 (broken)
 
   return {
     currentStreak,
-    longestStreak: currentStreak, // We'll track the longest separately
+    longestStreak: currentStreak,
     lastStreakDate,
   };
 }
@@ -1288,8 +1330,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
+    workSegments = [];
 
     endTime = Date.now() + remainingTime * 1000;
+    sessionStartTime = Date.now();
+    workSegments.push({ start: sessionStartTime, end: 0 });
 
     startTimerEngine();
     updateBadgeText(remainingTime);
@@ -1312,6 +1357,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         pauseCount++;
         currentState = "PAUSED";
         pauseTimeLeft = endTime - Date.now();
+        // Close the current work segment
+        if (
+          workSegments.length > 0 &&
+          workSegments[workSegments.length - 1].end === 0
+        ) {
+          workSegments[workSegments.length - 1].end = Date.now();
+        }
         pauseDurationSecs = settings.defaultPauseDuration * 60;
         resumeTimerEndTime = Date.now() + pauseDurationSecs * 1000;
         clearIntervalEngine();
@@ -1319,8 +1371,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         startResumeTimerEngine();
         saveStateToStorage();
         notifyStateChange();
-        // Play looping alert sound to remind user to unpause
-        await playSound("timeisabout_to_up.mp3", true).catch(() => {});
         sendResponse({
           success: true,
           pauseCount,
@@ -1337,6 +1387,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopSound();
       currentState = "RUNNING";
       endTime = Date.now() + pauseTimeLeft;
+      // Start a new work segment
+      workSegments.push({ start: Date.now(), end: 0 });
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
@@ -1368,6 +1420,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.durationMinutes || settings.defaultPauseDuration;
       currentState = "PAUSED";
       pauseTimeLeft = endTime - Date.now();
+      // Close the current work segment
+      if (
+        workSegments.length > 0 &&
+        workSegments[workSegments.length - 1].end === 0
+      ) {
+        workSegments[workSegments.length - 1].end = Date.now();
+      }
       pauseDurationSecs = durationMins * 60;
       resumeTimerEndTime = Date.now() + pauseDurationSecs * 1000;
       clearIntervalEngine();
@@ -1401,12 +1460,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const elapsedMins =
           savedTotalMins - Math.ceil(actualRemainingSecs / 60);
         if (elapsedMins > 0) {
-          const savedStartTime = savedEndTime - savedTotalMins * 60 * 1000;
-          const actualEndTime = now;
-          const daySplits = splitSessionAcrossDays(
-            savedStartTime,
-            actualEndTime,
-          );
+          // Close the last work segment if still open
+          if (
+            workSegments.length > 0 &&
+            workSegments[workSegments.length - 1].end === 0
+          ) {
+            workSegments[workSegments.length - 1].end = now;
+          }
+          const daySplits = splitSegmentsAcrossDays(workSegments);
           const history = res.workHistory || {};
           for (const [dateKey, minutes] of Object.entries(daySplits)) {
             const attributedMins = Math.floor(minutes * 0.8);
@@ -1419,9 +1480,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
 
-        // Save hourly breakdown for END handler
-        const savedStartTime = savedEndTime - savedTotalMins * 60 * 1000;
-        saveHourlyData(savedStartTime, now);
+        // Save hourly breakdown from segments for END handler
+        saveHourlyDataFromSegments(workSegments);
       }
 
       currentState = "IDLE";
@@ -1435,6 +1495,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pauseDurationSecs = 0;
       resumeTimerEndTime = 0;
       resumeOvertimeSeconds = 0;
+      sessionStartTime = 0;
+      workSegments = [];
 
       chrome.action.setBadgeText({ text: "" });
       chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });
@@ -1459,6 +1521,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     pauseDurationSecs = 0;
     resumeTimerEndTime = 0;
     resumeOvertimeSeconds = 0;
+    sessionStartTime = 0;
+    workSegments = [];
 
     chrome.action.setBadgeText({ text: "" });
     chrome.action.setBadgeBackgroundColor({ color: "#b81d18" });

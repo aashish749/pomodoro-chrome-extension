@@ -189,6 +189,7 @@ function processHourlyData(hourlyHistory, workHistory) {
       const mins = hours[h] || 0;
       hourlyTotals[h] += mins;
       hourlyByDayOfWeek[dayIdx][h] += mins;
+      if (mins > 0) hourlyCounts[h]++;
       dayTotal += mins;
     }
     // Add to daily totals if there was actual work and not already recorded
